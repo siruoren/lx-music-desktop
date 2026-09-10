@@ -13,9 +13,9 @@ export const importApi = async(script: string, url?: string): Promise<LX.UserApi
   }
 }
 export const updateApi = async(id: string, script: string): Promise<LX.UserApi.ImportUserApi> => {
-  const apiInfo = await handleUpdateApi(id, script)
-  // 若更新的是当前正在使用的源，则重新加载，让新脚本生效
-  if (userApiId == id) await setApi(id)
+  const { apiInfo, changed } = await handleUpdateApi(id, script)
+  // 若更新的是当前正在使用的源，且脚本确实有变化，则重新加载，让新脚本生效
+  if (changed && userApiId == id) await setApi(id)
   return {
     apiInfo,
     apiList: getUserApis(),

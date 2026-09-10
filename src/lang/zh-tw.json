@@ -728,6 +728,7 @@
   "update__timeout_top": "下載時間過長提示\n\n你目前所在網路訪問 GitHub 較慢，新版本已經下了一個鐘了還沒完成😳，你仍可以繼續等，但牆裂建議手動更新版本！",
   "user_api__allow_show_update_alert": "允許顯示更新彈出視窗",
   "user_api__auto_update": "自動更新",
+  "user_api__last_update": "最後更新：{date}",
   "user_api__btn_export": "匯出",
   "user_api__btn_import": "從本機匯入",
   "user_api__btn_import_online": "從線上匯入",

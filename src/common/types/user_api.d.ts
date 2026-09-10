@@ -23,6 +23,8 @@ declare namespace LX {
       autoUpdate: boolean
       /** 在线导入时的脚本地址，作为自动更新的回源地址，本地导入的源没有此字段 */
       url?: string
+      /** 最近一次自动更新成功的时间戳（ms），脚本内容没有实际变化时不会更新此字段 */
+      lastUpdateTime?: number
       author?: string
       homepage?: string
       version?: string
@@ -69,6 +71,12 @@ declare namespace LX {
     interface UserApiUpdateParams {
       id: string
       script: string
+    }
+
+    interface UserApiUpdateResult {
+      apiInfo: UserApiInfo
+      /** 脚本内容是否发生了实际变化，内容相同时为 false */
+      changed: boolean
     }
 
     interface ImportUserApi {
