@@ -4,6 +4,7 @@ import {
   getGlobalDispatcher,
   request as nodeRrequest,
   ProxyAgent,
+  Socks5ProxyAgent,
   setGlobalDispatcher,
   type Dispatcher,
 } from 'undici'
@@ -25,12 +26,15 @@ const buildDispatcher = () => {
 setGlobalDispatcher(buildDispatcher())
 
 export const setProxy = (url?: string) => {
-  proxyAgent = url ? new ProxyAgent(url) : null
+  proxyAgent = url
+    ? (url.startsWith('socks5')
+      ? new Socks5ProxyAgent(url)
+      : new ProxyAgent(url))
+    : null
   setGlobalDispatcher(buildDispatcher())
 }
-export const setProxyByHost = (host?: string, port?: string) => {
-  console.log(host)
-  setProxy(host ? `http://${host}:${port}` : undefined)
+export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string) => {
+  setProxy(host ? `${type}://${host}:${port}` : undefined)
 }
 const CONTENT_TYPE = {
   json: 'application/json',

@@ -55,7 +55,7 @@ export const createDownloadTasks = (
   // }
 }
 
-const createTask = async(downloadInfo: LX.Download.ListItem, savePath: string, skipExistFile: boolean, proxy?: { host: string, port: number }) => {
+const createTask = async(downloadInfo: LX.Download.ListItem, savePath: string, skipExistFile: boolean, proxy?: { host: string, port: number, type?: 'http' | 'socks5' }) => {
   // console.log('createTask', downloadInfo, savePath)
   // 开始任务
   /* commit('onStart', downloadInfo)
@@ -242,7 +242,7 @@ export const updateUrl = (id: string, url: string) => {
   })
 }
 
-export const startTask = async(downloadInfo: LX.Download.ListItem, savePath: string, skipExistFile: boolean, callback: (action: LX.Download.DownloadTaskActions) => void, proxy?: { host: string, port: number }) => {
+export const startTask = async(downloadInfo: LX.Download.ListItem, savePath: string, skipExistFile: boolean, callback: (action: LX.Download.DownloadTaskActions) => void, proxy?: { host: string, port: number, type?: 'http' | 'socks5' }) => {
   await pauseTask(downloadInfo.id)
 
   tasks.set(downloadInfo.id, downloadInfo)

@@ -23,6 +23,7 @@ const denyEvents = [
 export const getProxy = () => {
   if (global.lx.appSetting['network.proxy.enable'] && global.lx.appSetting['network.proxy.host']) {
     return {
+      type: global.lx.appSetting['network.proxy.type'],
       host: global.lx.appSetting['network.proxy.host'],
       port: global.lx.appSetting['network.proxy.port'],
     }
@@ -32,12 +33,14 @@ export const getProxy = () => {
     if (envProxy && typeof envProxy == 'string') {
       const [host, port = ''] = envProxy.split(':')
       return {
+        type: 'http',
         host,
         port,
       }
     }
   }
   return {
+    type: 'http',
     host: '',
     port: '',
   }

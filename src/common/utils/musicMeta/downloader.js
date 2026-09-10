@@ -2,10 +2,15 @@ const http = require('http')
 const https = require('https')
 const fs = require('fs')
 const { httpOverHttp, httpsOverHttp } = require('tunnel')
+const { SocksProxyAgent } = require('socks-proxy-agent')
 
 const httpsRxp = /^https:/
 const getRequestAgent = (url, proxy) => {
-  return proxy ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({ proxy }) : undefined
+  if (!proxy) return undefined
+  if (proxy.type === 'socks5') {
+    return new SocksProxyAgent(`socks5://${proxy.host}:${proxy.port}`)
+  }
+  return (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({ proxy })
 }
 
 const sendRequest = (url, proxy) => {

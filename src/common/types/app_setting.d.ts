@@ -616,6 +616,11 @@ declare global {
       'network.proxy.enable': boolean
 
       /**
+       * 代理类型
+       */
+      'network.proxy.type': 'http' | 'socks5'
+
+      /**
        * 代理服务器地址
        */
       'network.proxy.host': string

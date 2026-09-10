@@ -68,7 +68,7 @@ export const createWindow = () => {
   const { shouldUseDarkColors, theme } = global.lx.theme
   const ses = session.fromPartition('persist:win-main')
   const proxy = getProxy()
-  setSesProxy(ses, proxy?.host, proxy?.port)
+  setSesProxy(ses, proxy?.type, proxy?.host, proxy?.port)
 
   /**
    * Initial window options
@@ -129,11 +129,12 @@ export const closeWindow = () => {
   browserWindow.close()
 }
 
-const setSesProxy = (ses: Electron.Session, host?: string, port?: string | number) => {
+const setSesProxy = (ses: Electron.Session, type?: 'http' | 'socks5', host?: string, port?: string | number) => {
   if (host) {
+    const scheme = type === 'socks5' ? 'socks5' : 'http'
     void ses.setProxy({
       mode: 'fixed_servers',
-      proxyRules: `http://${host}:${port}`,
+      proxyRules: `${scheme}://${host}:${port}`,
     })
   } else {
     void ses.setProxy({
@@ -144,7 +145,7 @@ const setSesProxy = (ses: Electron.Session, host?: string, port?: string | numbe
 export const setProxy = () => {
   if (!browserWindow) return
   const proxy = getProxy()
-  setSesProxy(browserWindow.webContents.session, proxy?.host, proxy?.port)
+  setSesProxy(browserWindow.webContents.session, proxy?.type, proxy?.host, proxy?.port)
 }
 
 

@@ -9,6 +9,7 @@ process.versions.app = pkg.version
 export const apiSource = ref<string | null>(null)
 export const proxy: {
   enable: boolean
+  type: 'http' | 'socks5'
   host: string
   port: string
 
@@ -18,6 +19,7 @@ export const proxy: {
   }
 } = {
   enable: false,
+  type: 'http',
   host: '',
   port: '',
 }

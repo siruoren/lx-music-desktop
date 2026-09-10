@@ -6,27 +6,33 @@ import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'zlib'
 import { proxy } from '@renderer/store'
 import { httpOverHttp, httpsOverHttp } from 'tunnel'
+import { SocksProxyAgent } from 'socks-proxy-agent'
 // import fs from 'fs'
 
 const httpsRxp = /^https:/
 const getRequestAgent = url => {
-  let options
   if (proxy.enable && proxy.host) {
-    options = {
+    if (proxy.type === 'socks5') {
+      return new SocksProxyAgent(`socks5://${proxy.host}:${proxy.port}`)
+    }
+    const options = {
       proxy: {
         host: proxy.host,
         port: proxy.port,
       },
     }
-  } else if (proxy.envProxy) {
-    options = {
+    return httpsRxp.test(url) ? httpsOverHttp(options) : httpOverHttp(options)
+  }
+  if (proxy.envProxy) {
+    const options = {
       proxy: {
         host: proxy.envProxy.host,
         port: proxy.envProxy.port,
       },
     }
+    return httpsRxp.test(url) ? httpsOverHttp(options) : httpOverHttp(options)
   }
-  return options ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)(options) : undefined
+  return undefined
 }
 
 

@@ -4,6 +4,7 @@ import zlib from 'zlib'
 import { createCipheriv, publicEncrypt, constants, randomBytes, createHash } from 'crypto'
 import USER_API_RENDERER_EVENT_NAME from '../rendererEvent/name'
 import { httpOverHttp, httpsOverHttp } from 'tunnel'
+import { SocksProxyAgent } from 'socks-proxy-agent'
 
 
 const sendMessage = (action, data, status, message) => {
@@ -12,6 +13,7 @@ const sendMessage = (action, data, status, message) => {
 
 let isInitedApi = false
 const proxy = {
+  type: 'http',
   host: '',
   port: '',
 }
@@ -46,12 +48,16 @@ const supportActions = {
 
 const httpsRxp = /^https:/
 const getRequestAgent = url => {
-  return proxy.host ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({
+  if (!proxy.host) return undefined
+  if (proxy.type === 'socks5') {
+    return new SocksProxyAgent(`socks5://${proxy.host}:${proxy.port}`)
+  }
+  return (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({
     proxy: {
       host: proxy.host,
       port: proxy.port,
     },
-  }) : undefined
+  })
 }
 
 const verifyLyricInfo = (info) => {
@@ -186,6 +192,7 @@ const onError = (errorMessage) => {
 }
 
 const initEnv = (userApi) => {
+  proxy.type = userApi.proxy.type
   proxy.host = userApi.proxy.host
   proxy.port = userApi.proxy.port
 
@@ -372,6 +379,7 @@ ipcRenderer.on(USER_API_RENDERER_EVENT_NAME.initEnv, (event, data) => {
 })
 
 ipcRenderer.on(USER_API_RENDERER_EVENT_NAME.proxyUpdate, (event, data) => {
+  proxy.type = data.type
   proxy.host = data.host
   proxy.port = data.port
 })

@@ -132,6 +132,7 @@ const defaultSetting: LX.AppSetting = {
   'search.isFocusSearchBox': false,
 
   'network.proxy.enable': false,
+  'network.proxy.type': 'http',
   'network.proxy.host': '',
   'network.proxy.port': '',
 
