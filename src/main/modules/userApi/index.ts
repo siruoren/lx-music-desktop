@@ -1,14 +1,23 @@
 import { closeWindow } from './main'
-import { getUserApis, importApi as handleImportApi, removeApi as handleRemoveApi, setAllowShowUpdateAlert as saveAllowShowUpdateAlert } from './utils'
-import { loadApi, setAllowShowUpdateAlert as setRendererEventAllowShowUpdateAlert, init } from './rendererEvent/rendererEvent'
+import { getUserApis, importApi as handleImportApi, removeApi as handleRemoveApi, setAllowShowUpdateAlert as saveAllowShowUpdateAlert, updateApi as handleUpdateApi, setAutoUpdate as saveAutoUpdate } from './utils'
+import { loadApi, setAllowShowUpdateAlert as setRendererEventAllowShowUpdateAlert, setAutoUpdate as setRendererEventAutoUpdate, init } from './rendererEvent/rendererEvent'
 
 let userApiId: string | null
 
 export const getApiList = getUserApis
 
-export const importApi = async(script: string): Promise<LX.UserApi.ImportUserApi> => {
+export const importApi = async(script: string, url?: string): Promise<LX.UserApi.ImportUserApi> => {
   return {
-    apiInfo: await handleImportApi(script),
+    apiInfo: await handleImportApi(script, url),
+    apiList: getUserApis(),
+  }
+}
+export const updateApi = async(id: string, script: string): Promise<LX.UserApi.ImportUserApi> => {
+  const apiInfo = await handleUpdateApi(id, script)
+  // 若更新的是当前正在使用的源，则重新加载，让新脚本生效
+  if (userApiId == id) await setApi(id)
+  return {
+    apiInfo,
     apiList: getUserApis(),
   }
 }
@@ -35,6 +44,11 @@ export const setApi = async(id: string) => {
 export const setAllowShowUpdateAlert = (id: string, enable: boolean) => {
   saveAllowShowUpdateAlert(id, enable)
   setRendererEventAllowShowUpdateAlert(id, enable)
+}
+
+export const setAutoUpdate = (id: string, enable: boolean) => {
+  saveAutoUpdate(id, enable)
+  setRendererEventAutoUpdate(id, enable)
 }
 
 

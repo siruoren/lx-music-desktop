@@ -727,6 +727,7 @@
   "update__ignore_tip": "你現在使用的版本距離最新版本已經落後了 {num} 個版本🤪，為了更好的使用體驗，建議更新到最新版本哦~！\n\n註：若使用新版本時遇到問題，請先嘗試閱讀常見問題解決，若你遇到的問題在常見問題中未記錄或無法解決，可以透過教學文件中提到的回報管道向我們回報😘！",
   "update__timeout_top": "下載時間過長提示\n\n你目前所在網路訪問 GitHub 較慢，新版本已經下了一個鐘了還沒完成😳，你仍可以繼續等，但牆裂建議手動更新版本！",
   "user_api__allow_show_update_alert": "允許顯示更新彈出視窗",
+  "user_api__auto_update": "自動更新",
   "user_api__btn_export": "匯出",
   "user_api__btn_import": "從本機匯入",
   "user_api__btn_import_online": "從線上匯入",

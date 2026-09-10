@@ -12,6 +12,7 @@ material-modal(:show="modelValue" bg-close teleport="#view" @close="handleClose"
           p {{ api.description }}
           div
             base-checkbox(:id="`user_api_${api.id}`" v-model="api.allowShowUpdateAlert" :class="$style.checkbox" :label="$t('user_api__allow_show_update_alert')" @change="handleChangeAllowUpdateAlert(api, $event)")
+            base-checkbox(v-if="api.url" :id="`user_api_auto_update_${api.id}`" v-model="api.autoUpdate" :class="$style.checkbox" :label="$t('user_api__auto_update')" @change="handleChangeAutoUpdate(api, $event)")
         base-btn(:class="$style.listBtn" outline :aria-label="$t('user_api__btn_remove')" @click.stop="handleRemove(index)")
           svg(v-once version="1.1" xmlns="http://www.w3.org/2000/svg" xlink="http://www.w3.org/1999/xlink" viewBox="0 0 212.982 212.982" space="preserve")
             use(xlink:href="#icon-delete")
@@ -30,7 +31,7 @@ material-modal(:show="modelValue" bg-close teleport="#view" @close="handleClose"
 </template>
 
 <script>
-import { importUserApi, removeUserApi, showSelectDialog, setAllowShowUserApiUpdateAlert } from '@renderer/utils/ipc'
+import { importUserApi, removeUserApi, showSelectDialog, setAllowShowUserApiUpdateAlert, setUserApiAutoUpdate } from '@renderer/utils/ipc'
 import { readFile } from '@common/utils/nodejs'
 import { openUrl } from '@common/utils/electron'
 import apiSourceInfo from '@renderer/utils/musicSdk/api-source-info'
@@ -64,8 +65,8 @@ export default {
     }
   },
   methods: {
-    async importUserApi(script) {
-      return importUserApi(script).then(({ apiList }) => {
+    async importUserApi(script, url) {
+      return importUserApi(script, url).then(({ apiList }) => {
         userApi.list = apiList
       }).catch((err) => {
         void dialog(this.$t('user_api_import__failed', { message: err.message }))
@@ -114,6 +115,9 @@ export default {
     },
     handleChangeAllowUpdateAlert(api, enable) {
       void setAllowShowUserApiUpdateAlert(api.id, enable)
+    },
+    handleChangeAutoUpdate(api, enable) {
+      void setUserApiAutoUpdate(api.id, enable)
     },
   },
 }

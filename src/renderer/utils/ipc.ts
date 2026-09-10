@@ -121,8 +121,11 @@ export const onUpdateNotAvailable = (listener: LX.IpcRendererEventListenerParams
 }
 
 
-export const importUserApi = async(fileText: string) => {
-  return rendererInvoke<string, LX.UserApi.ImportUserApi>(WIN_MAIN_RENDERER_EVENT_NAME.import_user_api, fileText)
+export const importUserApi = async(fileText: string, url?: string) => {
+  return rendererInvoke<LX.UserApi.UserApiImportParams, LX.UserApi.ImportUserApi>(WIN_MAIN_RENDERER_EVENT_NAME.import_user_api, { script: fileText, url })
+}
+export const updateUserApi = async(id: string, script: string) => {
+  return rendererInvoke<LX.UserApi.UserApiUpdateParams, LX.UserApi.ImportUserApi>(WIN_MAIN_RENDERER_EVENT_NAME.update_user_api, { id, script })
 }
 export const setUserApi = async(source: LX.UserApi.UserApiSetApiParams): Promise<void> => {
   return rendererInvoke<LX.UserApi.UserApiSetApiParams>(WIN_MAIN_RENDERER_EVENT_NAME.set_user_api, source)
@@ -138,6 +141,9 @@ export const onShowUserApiUpdateAlert = (listener: LX.IpcRendererEventListenerPa
 }
 export const setAllowShowUserApiUpdateAlert = async(id: string, enable: boolean): Promise<void> => {
   return rendererInvoke(WIN_MAIN_RENDERER_EVENT_NAME.user_api_set_allow_update_alert, { id, enable })
+}
+export const setUserApiAutoUpdate = async(id: string, enable: boolean): Promise<void> => {
+  return rendererInvoke(WIN_MAIN_RENDERER_EVENT_NAME.user_api_set_auto_update, { id, enable })
 }
 export const onUserApiStatus = (listener: LX.IpcRendererEventListenerParams<LX.UserApi.UserApiStatus>): RemoveListener => {
   rendererOn(WIN_MAIN_RENDERER_EVENT_NAME.user_api_status, listener)

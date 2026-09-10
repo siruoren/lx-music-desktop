@@ -76,7 +76,7 @@ export default {
         }))
         return
       }
-      this.$emit('import', script)
+      this.$emit('import', script, url)
       this.handleClose()
     },
   },

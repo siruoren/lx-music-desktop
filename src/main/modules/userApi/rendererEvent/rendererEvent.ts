@@ -149,6 +149,11 @@ export const setAllowShowUpdateAlert = (id: string, enable: boolean) => {
   userApi.allowShowUpdateAlert = enable
 }
 
+export const setAutoUpdate = (id: string, enable: boolean) => {
+  if (!userApi || userApi.id != id) return
+  userApi.autoUpdate = enable
+}
+
 export const sendRequest = (reqData: { requestKey: string, data: any }) => {
   sendEvent(USER_API_RENDERER_EVENT_NAME.request, reqData)
 }

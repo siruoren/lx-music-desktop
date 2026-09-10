@@ -1,11 +1,50 @@
 import { onBeforeUnmount, watch } from '@common/utils/vueTools'
 import { useI18n } from '@renderer/plugins/i18n'
-import { onUserApiStatus, getUserApiList, sendUserApiRequest as sendUserApiRequestRemote, userApiRequestCancel, onShowUserApiUpdateAlert } from '@renderer/utils/ipc'
+import { onUserApiStatus, getUserApiList, sendUserApiRequest as sendUserApiRequestRemote, userApiRequestCancel, onShowUserApiUpdateAlert, updateUserApi } from '@renderer/utils/ipc'
+import { httpFetch } from '@renderer/utils/request'
 import { openUrl } from '@common/utils/electron'
 import { qualityList, userApi } from '@renderer/store'
 import { appSetting } from '@renderer/store/setting'
 import { dialog } from '@renderer/plugins/Dialog'
 import { setUserApi } from '@renderer/core/apiSource'
+
+const MAX_SCRIPT_SIZE = 9_000_000
+
+/**
+ * 启动时自动更新开启了「自动更新」的在线源
+ * 更新以源的 id 为准，所以即使新脚本里源名称等信息变了，
+ * 该源的勾选状态（自动更新、允许显示更新弹窗）以及当前选中的源都不会丢失
+ */
+const autoUpdateUserApi = async() => {
+  const list = userApi.list.filter(api => api.autoUpdate && api.url)
+  if (!list.length) return
+
+  let updated = false
+  await Promise.all(list.map(async api => {
+    try {
+      const resp = await httpFetch(api.url as string, { follow_max: 3, timeout: 20_000 }).promise as { body?: unknown }
+      const script = resp?.body
+      if (typeof script != 'string' || !script.length) return
+      if (script.length > MAX_SCRIPT_SIZE) {
+        console.warn(`The script of ${api.name} is too large, skip auto update`)
+        return
+      }
+      await updateUserApi(api.id, script)
+      updated = true
+    } catch (err) {
+      console.log(err)
+    }
+  }))
+
+  // 统一重新拉取一次列表，避免并发更新时返回的列表相互覆盖
+  if (updated) {
+    await getUserApiList().then(apiList => {
+      userApi.list = apiList
+    }).catch(err => {
+      console.log(err)
+    })
+  }
+}
 
 const sendUserApiRequest: typeof sendUserApiRequestRemote = async(data) => {
   let stop: () => void
@@ -172,7 +211,7 @@ export default () => {
 
   return async() => {
     await setUserApi(appSetting['common.apiSource'])
-    void getUserApiList().then(list => {
+    void getUserApiList().then(async list => {
       // console.log(list)
       // if (![...apiSourceInfo.map(s => s.id), ...list.map(s => s.id)].includes(appSetting['common.apiSource'])) {
       //   console.warn('reset api')
@@ -180,6 +219,8 @@ export default () => {
       //   if (api) apiSource.value = api.id
       // }
       userApi.list = list
+      // 每次启动软件自动更新开启了自动更新的在线源，不阻塞启动流程
+      await autoUpdateUserApi()
     }).catch(err => {
       console.log(err)
     })

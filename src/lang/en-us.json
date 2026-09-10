@@ -727,6 +727,7 @@
   "update__ignore_tip": "The version you are using now is behind the latest version by {num} versions🤪. For a better user experience, it is recommended to update to the latest version~!\nNOTE: If you encounter problems when using the new version, please read the FAQ first. If the problem you encounter is not documented in the FAQ or cannot be resolved, you can give us feedback through the feedback channels mentioned in the document😘!",
   "update__timeout_top": "Download time is too long prompt\n\nYour current network access to GitHub is slow, and the new version has been downloaded for an hour and has not been completed yet😳. You can still choose to continue waiting, but it is highly recommended to manually update the version!",
   "user_api__allow_show_update_alert": "Allow update popup to show",
+  "user_api__auto_update": "Auto update",
   "user_api__btn_export": "Export",
   "user_api__btn_import": "Import from Local File",
   "user_api__btn_import_online": "Import from Network",
