@@ -27,7 +27,7 @@ const autoUpdateUserApi = async() => {
   let updated = false
   await Promise.all(list.map(async api => {
     try {
-      const request = httpFetch(api.url as string, { follow_max: 3, timeout: 20_000 }) as unknown as HttpFetchResult
+      const request = httpFetch(api.url as string, { follow_max: 3, timeout: 20_000, noProxy: true }) as unknown as HttpFetchResult
       const script = (await request.promise).body
       if (typeof script != 'string' || !script.length) return
       if (script.length > MAX_SCRIPT_SIZE) {
