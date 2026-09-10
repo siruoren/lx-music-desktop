@@ -302,7 +302,7 @@ export const setPowerSaveBlocker = (enabled: boolean) => {
 }
 
 
-let envProxy: null | { host: string, port: number, type: 'http' | 'socks5', username: string, password: string } = null
+let envProxy: null | { host: string, port: number, type: 'http' | 'socks5', username: string, password: string, dnsResolve: 'local' | 'remote' } = null
 export const getProxy = () => {
   if (global.lx.appSetting['network.proxy.enable'] && global.lx.appSetting['network.proxy.host']) {
     return {
@@ -311,7 +311,7 @@ export const getProxy = () => {
       type: global.lx.appSetting['network.proxy.type'],
       username: global.lx.appSetting['network.proxy.username'],
       password: global.lx.appSetting['network.proxy.password'],
-      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'],
+      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'] as 'local' | 'remote',
     }
   }
   if (envProxy) {

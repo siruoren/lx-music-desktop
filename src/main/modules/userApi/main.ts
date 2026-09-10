@@ -28,7 +28,7 @@ export const getProxy = () => {
       port: global.lx.appSetting['network.proxy.port'],
       username: global.lx.appSetting['network.proxy.username'],
       password: global.lx.appSetting['network.proxy.password'],
-      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'],
+      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'] as 'local' | 'remote',
     }
   }
   const envProxy = envParams.cmdParams['proxy-server']
