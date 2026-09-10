@@ -1,33 +1,36 @@
-import tls from 'node:tls'
 import { Agent, type Dispatcher } from 'undici'
 import { SocksClient } from 'socks'
 
 /**
  * undici 原生只支持 HTTP 代理（ProxyAgent 走 CONNECT），不支持 SOCKS5。
  * 这里构造一个自定义 Agent，其 connect 先经 SOCKS5 代理建立 TCP 隧道，
- * 再（对 https 目标）在其上做 TLS，从而让 undici 的请求走 SOCKS5 代理。
+ * 返回原始套接字，由 undici 自行处理 https 目标的 TLS 握手（切勿在此手动 tls.connect，
+ * 否则会与 undici 的 TLS 流程重复包裹导致 https 请求失败）。
  */
 export const createSocksDispatcher = (proxyUrl: string): Dispatcher => {
-  const { hostname, port } = new URL(proxyUrl)
-  const proxy = {
+  const { hostname, port, username, password } = new URL(proxyUrl)
+  const proxy: {
+    host: string
+    port: number
+    type: 5
+    userId?: string
+    password?: string
+  } = {
     host: hostname,
     port: Number(port),
-    type: 5 as const,
+    type: 5,
   }
+  // new URL() 会自动对 userinfo 做 percent-decode，这里直接透传给 socks 包即可
+  if (username) proxy.userId = username
+  if (password) proxy.password = password
   return new Agent({
     connect: async(opts) => {
       const { socket } = await SocksClient.createConnection({
         proxy,
         command: 'connect',
-        destination: { host: opts.hostname, port: Number(opts.port) },
+        // 传入字符串 host 让 SOCKS5 代理做远程 DNS 解析（与 socks5h 等价）
+        destination: { host: opts.hostname ?? (opts as { host?: string }).host ?? '', port: Number(opts.port) },
       })
-      if (opts.protocol === 'https:') {
-        return tls.connect({
-          socket,
-          servername: opts.servername ?? opts.hostname,
-          ALPNProtocols: ['http/1.1'],
-        })
-      }
       return socket
     },
   })

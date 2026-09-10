@@ -23,6 +23,8 @@ export default () => {
   proxy.type = appSetting['network.proxy.type']
   proxy.host = appSetting['network.proxy.host']
   proxy.port = appSetting['network.proxy.port']
+  proxy.username = appSetting['network.proxy.username']
+  proxy.password = appSetting['network.proxy.password']
   isFullscreen.value = appSetting['common.startInFullscreen']
   themeId.value = appSetting['theme.id']
 

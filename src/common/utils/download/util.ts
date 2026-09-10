@@ -13,10 +13,13 @@ export const STATUS = {
 } as const
 
 const httpsRxp = /^https:/
-export const getRequestAgent = (url: string, proxy?: { host: string, port: number, type?: 'http' | 'socks5' }) => {
+export const getRequestAgent = (url: string, proxy?: { host: string, port: number, type?: 'http' | 'socks5', username?: string, password?: string }) => {
   if (!proxy) return undefined
   if (proxy.type === 'socks5') {
-    return new SocksProxyAgent(`socks5://${proxy.host}:${proxy.port}`)
+    const auth = proxy.username
+      ? `${encodeURIComponent(proxy.username)}${proxy.password ? ':' + encodeURIComponent(proxy.password) : ''}@`
+      : ''
+    return new SocksProxyAgent(`socks5h://${auth}${proxy.host}:${proxy.port}`)
   }
   const options = {
     proxy: {

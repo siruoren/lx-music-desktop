@@ -12,6 +12,8 @@ export const proxy: {
   type: 'http' | 'socks5'
   host: string
   port: string
+  username: string
+  password: string
 
   envProxy?: {
     host: string
@@ -22,6 +24,8 @@ export const proxy: {
   type: 'http',
   host: '',
   port: '',
+  username: '',
+  password: '',
 }
 export const sync: {
   enable: boolean

@@ -240,7 +240,13 @@ export const listenerAppEvent = (startApp: () => void) => {
   const setProxy = () => {
     const proxy = getProxy()
     if (proxy && proxy.host) {
-      setProxyByHost(proxy.type, proxy.host, proxy.port ? String(proxy.port) : undefined)
+      setProxyByHost(
+        proxy.type,
+        proxy.host,
+        proxy.port ? String(proxy.port) : undefined,
+        proxy.username,
+        proxy.password,
+      )
     } else setProxyByHost()
   }
   global.lx.event_app.on('updated_config', (keys, setting) => {

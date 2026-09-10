@@ -26,6 +26,8 @@ export const getProxy = () => {
       type: global.lx.appSetting['network.proxy.type'],
       host: global.lx.appSetting['network.proxy.host'],
       port: global.lx.appSetting['network.proxy.port'],
+      username: global.lx.appSetting['network.proxy.username'],
+      password: global.lx.appSetting['network.proxy.password'],
     }
   }
   const envProxy = envParams.cmdParams['proxy-server']
@@ -36,6 +38,8 @@ export const getProxy = () => {
         type: 'http',
         host,
         port,
+        username: '',
+        password: '',
       }
     }
   }
@@ -43,6 +47,8 @@ export const getProxy = () => {
     type: 'http',
     host: '',
     port: '',
+    username: '',
+    password: '',
   }
 }
 const handleUpdateProxy = (keys: Array<keyof LX.AppSetting>) => {

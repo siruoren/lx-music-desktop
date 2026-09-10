@@ -138,6 +138,8 @@ const getProxy = () => {
     host: proxy.host,
     port: parseInt(proxy.port || '80'),
     type: proxy.type,
+    username: proxy.username,
+    password: proxy.password,
   } : proxy.envProxy ? {
     host: proxy.envProxy.host,
     port: parseInt(proxy.envProxy.port || '80'),

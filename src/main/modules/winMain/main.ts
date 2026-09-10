@@ -67,6 +67,15 @@ export const createWindow = () => {
 
   const { shouldUseDarkColors, theme } = global.lx.theme
   const ses = session.fromPartition('persist:win-main')
+  // SOCKS5（及 HTTP）代理带账户密码鉴权时，Chromium 无法在 proxyRules 中嵌入凭据，
+  // 需通过 login 事件回传凭据；无账户密码时直接放行。
+  ses.removeAllListeners('login')
+  ses.on('login', (event, authInfo, callback) => {
+    if (!authInfo.isProxy) return callback()
+    const p = getProxy()
+    if (p?.username) callback(p.username, p.password ?? '')
+    else callback()
+  })
   const proxy = getProxy()
   setSesProxy(ses, proxy?.type, proxy?.host, proxy?.port)
 

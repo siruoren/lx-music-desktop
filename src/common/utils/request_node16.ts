@@ -33,8 +33,17 @@ export const setProxy = (url?: string) => {
     : null
   setGlobalDispatcher(buildDispatcher())
 }
-export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string) => {
-  setProxy(host ? `${type}://${host}:${port}` : undefined)
+export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string, username?: string, password?: string) => {
+  if (!host) {
+    setProxy(undefined)
+    return
+  }
+  if (type === 'socks5' && username) {
+    const auth = `${encodeURIComponent(username)}${password ? ':' + encodeURIComponent(password) : ''}@`
+    setProxy(`socks5://${auth}${host}:${port}`)
+    return
+  }
+  setProxy(`${type}://${host}:${port}`)
 }
 const CONTENT_TYPE = {
   json: 'application/json',

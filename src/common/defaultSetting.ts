@@ -135,6 +135,8 @@ const defaultSetting: LX.AppSetting = {
   'network.proxy.type': 'http',
   'network.proxy.host': '',
   'network.proxy.port': '',
+  'network.proxy.username': '',
+  'network.proxy.password': '',
 
   'tray.enable': false,
   // 'tray.isToTray': false,

@@ -309,6 +309,8 @@ export const getProxy = () => {
       host: global.lx.appSetting['network.proxy.host'],
       port: parseInt(global.lx.appSetting['network.proxy.port'] || '80'),
       type: global.lx.appSetting['network.proxy.type'],
+      username: global.lx.appSetting['network.proxy.username'],
+      password: global.lx.appSetting['network.proxy.password'],
     }
   }
   if (envProxy) {
@@ -316,6 +318,8 @@ export const getProxy = () => {
       host: envProxy.host,
       port: envProxy.port,
       type: envProxy.type,
+      username: '',
+      password: '',
     }
   } else {
     const envProxyStr = envParams.cmdParams['proxy-server']
@@ -325,6 +329,8 @@ export const getProxy = () => {
         host,
         port: parseInt(port || '80'),
         type: 'http',
+        username: '',
+        password: '',
       }
     }
   }

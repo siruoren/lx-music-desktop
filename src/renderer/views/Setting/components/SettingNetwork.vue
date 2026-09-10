@@ -14,6 +14,10 @@ dd
       base-input(:model-value="appSetting['network.proxy.host']" :placeholder="proxy.envProxy ? proxy.envProxy.host : $t('setting__network_proxy_host')" @update:model-value="setHost")
     .p
       base-input(:model-value="appSetting['network.proxy.port']" :placeholder="proxy.envProxy ? proxy.envProxy.port : $t('setting__network_proxy_port')" @update:model-value="setPort")
+    .p
+      base-input(:model-value="appSetting['network.proxy.username']" :placeholder="$t('setting__network_proxy_username')" @update:model-value="setUsername")
+    .p
+      base-input(:model-value="appSetting['network.proxy.password']" type="password" :placeholder="$t('setting__network_proxy_password')" @update:model-value="setPassword")
 
 </template>
 
@@ -32,6 +36,12 @@ export default {
     }, 500)
     const setPort = debounce(port => {
       updateSetting({ 'network.proxy.port': port.trim() })
+    }, 500)
+    const setUsername = debounce(username => {
+      updateSetting({ 'network.proxy.username': username.trim() })
+    }, 500)
+    const setPassword = debounce(password => {
+      updateSetting({ 'network.proxy.password': password })
     }, 500)
     const setType = debounce(type => {
       updateSetting({ 'network.proxy.type': type })

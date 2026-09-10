@@ -22,7 +22,7 @@ export interface Options {
   method?: DownloaderOptions['requestOptions']['method']
   headers?: DownloaderOptions['requestOptions']['headers']
   forceResume?: boolean
-  proxy?: { host: string, port: number, type?: 'http' | 'socks5' }
+  proxy?: { host: string, port: number, type?: 'http' | 'socks5', username?: string, password?: string }
   onCompleted?: () => void
   onError?: (error: Error) => void
   onFail?: (response: http.IncomingMessage) => void

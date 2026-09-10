@@ -631,6 +631,16 @@ declare global {
       'network.proxy.port': string
 
       /**
+       * 代理服务器用户名（SOCKS5 鉴权，留空表示无账户密码）
+       */
+      'network.proxy.username': string
+
+      /**
+       * 代理服务器密码（SOCKS5 鉴权，留空表示无账户密码）
+       */
+      'network.proxy.password': string
+
+      /**
        * 是否启用托盘
        */
       'tray.enable': boolean
