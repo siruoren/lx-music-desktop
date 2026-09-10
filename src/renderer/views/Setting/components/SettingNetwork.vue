@@ -34,7 +34,7 @@ export default {
       updateSetting({ 'network.proxy.port': port.trim() })
     }, 500)
     const setType = debounce(type => {
-      updateSetting({ 'network.proxy.type': type as 'http' | 'socks5' })
+      updateSetting({ 'network.proxy.type': type })
     }, 300)
 
     onBeforeUnmount(() => {
