@@ -10,6 +10,11 @@ import { setUserApi } from '@renderer/core/apiSource'
 
 const MAX_SCRIPT_SIZE = 9_000_000
 
+// request.js 是 JS 文件，TS 无法推断出 httpFetch 返回值上动态追加的 promise 属性，这里显式声明
+interface HttpFetchResult {
+  promise: Promise<{ body?: unknown }>
+}
+
 /**
  * 启动时自动更新开启了「自动更新」的在线源
  * 更新以源的 id 为准，所以即使新脚本里源名称等信息变了，
@@ -22,8 +27,8 @@ const autoUpdateUserApi = async() => {
   let updated = false
   await Promise.all(list.map(async api => {
     try {
-      const resp = await httpFetch(api.url as string, { follow_max: 3, timeout: 20_000 }).promise as { body?: unknown }
-      const script = resp?.body
+      const request = httpFetch(api.url as string, { follow_max: 3, timeout: 20_000 }) as unknown as HttpFetchResult
+      const script = (await request.promise).body
       if (typeof script != 'string' || !script.length) return
       if (script.length > MAX_SCRIPT_SIZE) {
         console.warn(`The script of ${api.name} is too large, skip auto update`)
