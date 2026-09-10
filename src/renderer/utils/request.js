@@ -120,7 +120,10 @@ export const httpFetch = (url, options = { method: 'get' }) => {
   requestObj.promise = requestObj.promise.catch(err => {
     // console.log('出错', err)
     if (err.message === 'socket hang up') {
-      // window.globalObj.apiSource = 'temp'
+      // 通过代理请求时出现 socket hang up，通常是代理地址/端口/类型不对或代理未启动
+      if (proxy.enable && proxy.host) {
+        return Promise.reject(new Error(`${requestMsg.unachievable}（已通过代理 ${proxy.type}://${proxy.host}:${proxy.port} 发起请求但连接失败，请检查代理是否可用 / 类型是否匹配）`))
+      }
       return Promise.reject(new Error(requestMsg.unachievable))
     }
     switch (err.code) {
