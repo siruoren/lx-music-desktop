@@ -20,8 +20,12 @@ import handleListAutoUpdate from './listAutoUpdate'
 export default () => {
   // apiSource.value = appSetting['common.apiSource']
   proxy.enable = appSetting['network.proxy.enable']
+  proxy.type = appSetting['network.proxy.type']
   proxy.host = appSetting['network.proxy.host']
   proxy.port = appSetting['network.proxy.port']
+  proxy.username = appSetting['network.proxy.username']
+  proxy.password = appSetting['network.proxy.password']
+  proxy.dnsResolve = appSetting['network.proxy.dnsResolve']
   isFullscreen.value = appSetting['common.startInFullscreen']
   themeId.value = appSetting['theme.id']
 

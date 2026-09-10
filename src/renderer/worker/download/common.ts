@@ -10,7 +10,7 @@ export const writeMeta = ({ filePath, isEmbedLyricLx, isEmbedLyricT, isEmbedLyri
   artist: string
   album: string
   APIC: string | null
-}, lyric: LX.Music.LyricInfo, proxy?: { host: string, port: number }) => {
+}, lyric: LX.Music.LyricInfo, proxy?: { host: string, port: number, type?: 'http' | 'socks5', username?: string, password?: string }) => {
   setMeta(filePath, { ...meta, lyrics: buildLyrics(lyric, isEmbedLyricLx, isEmbedLyricT, isEmbedLyricR) }, proxy)
 }
 

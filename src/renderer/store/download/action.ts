@@ -137,9 +137,15 @@ const getProxy = () => {
   return proxy.enable && proxy.host ? {
     host: proxy.host,
     port: parseInt(proxy.port || '80'),
+    type: proxy.type,
+    username: proxy.username,
+    password: proxy.password,
+    dnsResolve: proxy.dnsResolve,
   } : proxy.envProxy ? {
     host: proxy.envProxy.host,
     port: parseInt(proxy.envProxy.port || '80'),
+    type: 'http' as const,
+    dnsResolve: 'remote' as const,
   } : undefined
 }
 /**

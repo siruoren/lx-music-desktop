@@ -1,4 +1,5 @@
 import { httpOverHttp, httpsOverHttp } from 'tunnel'
+import { SocksProxyAgent } from 'socks-proxy-agent'
 
 export const STATUS = {
   idle: 'IDLE',
@@ -12,15 +13,20 @@ export const STATUS = {
 } as const
 
 const httpsRxp = /^https:/
-export const getRequestAgent = (url: string, proxy?: { host: string, port: number }) => {
-  let options
-  if (proxy) {
-    options = {
-      proxy: {
-        host: proxy.host,
-        port: proxy.port,
-      },
-    }
+export const getRequestAgent = (url: string, proxy?: { host: string, port: number, type?: 'http' | 'socks5', username?: string, password?: string, dnsResolve?: 'local' | 'remote' }) => {
+  if (!proxy) return undefined
+  if (proxy.type === 'socks5') {
+    const auth = proxy.username
+      ? `${encodeURIComponent(proxy.username)}${proxy.password ? ':' + encodeURIComponent(proxy.password) : ''}@`
+      : ''
+    const scheme = proxy.dnsResolve === 'local' ? 'socks5' : 'socks5h'
+    return new SocksProxyAgent(`${scheme}://${auth}${proxy.host}:${proxy.port}`)
   }
-  return options ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)(options) : undefined
+  const options = {
+    proxy: {
+      host: proxy.host,
+      port: proxy.port,
+    },
+  }
+  return httpsRxp.test(url) ? httpsOverHttp(options) : httpOverHttp(options)
 }

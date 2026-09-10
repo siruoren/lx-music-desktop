@@ -61,7 +61,7 @@ export default {
       this.btnText = this.$t('user_api_import_online__input_loading')
       let script
       try {
-        script = await httpFetch(url, { follow_max: 3 }).promise.then(resp => resp.body)
+        script = await httpFetch(url, { follow_max: 3, noProxy: true }).promise.then(resp => resp.body)
       } catch (err) {
         void dialog(this.$t('user_api_import__failed', { message: err.message }))
         return

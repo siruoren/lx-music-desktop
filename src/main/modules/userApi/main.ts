@@ -23,8 +23,12 @@ const denyEvents = [
 export const getProxy = () => {
   if (global.lx.appSetting['network.proxy.enable'] && global.lx.appSetting['network.proxy.host']) {
     return {
+      type: global.lx.appSetting['network.proxy.type'],
       host: global.lx.appSetting['network.proxy.host'],
       port: global.lx.appSetting['network.proxy.port'],
+      username: global.lx.appSetting['network.proxy.username'],
+      password: global.lx.appSetting['network.proxy.password'],
+      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'] as 'local' | 'remote',
     }
   }
   const envProxy = envParams.cmdParams['proxy-server']
@@ -32,14 +36,22 @@ export const getProxy = () => {
     if (envProxy && typeof envProxy == 'string') {
       const [host, port = ''] = envProxy.split(':')
       return {
+        type: 'http',
         host,
         port,
+        username: '',
+        password: '',
+        dnsResolve: 'remote',
       }
     }
   }
   return {
+    type: 'http',
     host: '',
     port: '',
+    username: '',
+    password: '',
+    dnsResolve: 'remote',
   }
 }
 const handleUpdateProxy = (keys: Array<keyof LX.AppSetting>) => {

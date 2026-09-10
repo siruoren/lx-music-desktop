@@ -98,10 +98,22 @@ export default () => {
   watch(() => appSetting['network.proxy.enable'], enable => {
     proxy.enable = enable
   })
+  watch(() => appSetting['network.proxy.type'], type => {
+    proxy.type = type
+  })
   watch(() => appSetting['network.proxy.host'], host => {
     proxy.host = host
   })
   watch(() => appSetting['network.proxy.port'], port => {
     proxy.port = port
+  })
+  watch(() => appSetting['network.proxy.username'], username => {
+    proxy.username = username
+  })
+  watch(() => appSetting['network.proxy.password'], password => {
+    proxy.password = password
+  })
+  watch(() => appSetting['network.proxy.dnsResolve'], dnsResolve => {
+    proxy.dnsResolve = dnsResolve
   })
 }

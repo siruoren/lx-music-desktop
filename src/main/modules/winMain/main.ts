@@ -67,8 +67,19 @@ export const createWindow = () => {
 
   const { shouldUseDarkColors, theme } = global.lx.theme
   const ses = session.fromPartition('persist:win-main')
+  // SOCKS5（及 HTTP）代理带账户密码鉴权时，Chromium 无法在 proxyRules 中嵌入凭据，
+  // 需通过 login 事件回传凭据；无账户密码时直接放行。
+  // 注：当前 electron 类型定义的 Session.on 未包含 'login' 重载，这里做一次最小范围的类型断言。
+  const onLogin = (event: Electron.Event, authInfo: Electron.AuthInfo, callback: (username?: string, password?: string) => void) => {
+    if (!authInfo.isProxy) return callback()
+    const p = getProxy()
+    if (p?.username) callback(p.username, p.password ?? '')
+    else callback()
+  }
+  ses.removeAllListeners('login')
+  ;(ses as unknown as { on(event: 'login', listener: typeof onLogin): void }).on('login', onLogin)
   const proxy = getProxy()
-  setSesProxy(ses, proxy?.host, proxy?.port)
+  setSesProxy(ses, proxy?.type, proxy?.host, proxy?.port)
 
   /**
    * Initial window options
@@ -129,11 +140,12 @@ export const closeWindow = () => {
   browserWindow.close()
 }
 
-const setSesProxy = (ses: Electron.Session, host?: string, port?: string | number) => {
+const setSesProxy = (ses: Electron.Session, type?: 'http' | 'socks5', host?: string, port?: string | number) => {
   if (host) {
+    const scheme = type === 'socks5' ? 'socks5' : 'http'
     void ses.setProxy({
       mode: 'fixed_servers',
-      proxyRules: `http://${host}:${port}`,
+      proxyRules: `${scheme}://${host}:${port}`,
     })
   } else {
     void ses.setProxy({
@@ -144,7 +156,7 @@ const setSesProxy = (ses: Electron.Session, host?: string, port?: string | numbe
 export const setProxy = () => {
   if (!browserWindow) return
   const proxy = getProxy()
-  setSesProxy(browserWindow.webContents.session, proxy?.host, proxy?.port)
+  setSesProxy(browserWindow.webContents.session, proxy?.type, proxy?.host, proxy?.port)
 }
 
 

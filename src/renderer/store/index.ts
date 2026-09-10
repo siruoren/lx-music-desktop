@@ -9,8 +9,12 @@ process.versions.app = pkg.version
 export const apiSource = ref<string | null>(null)
 export const proxy: {
   enable: boolean
+  type: 'http' | 'socks5'
   host: string
   port: string
+  username: string
+  password: string
+  dnsResolve: 'local' | 'remote'
 
   envProxy?: {
     host: string
@@ -18,8 +22,12 @@ export const proxy: {
   }
 } = {
   enable: false,
+  type: 'http',
   host: '',
   port: '',
+  username: '',
+  password: '',
+  dnsResolve: 'remote',
 }
 export const sync: {
   enable: boolean

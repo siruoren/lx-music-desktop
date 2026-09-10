@@ -132,8 +132,12 @@ const defaultSetting: LX.AppSetting = {
   'search.isFocusSearchBox': false,
 
   'network.proxy.enable': false,
+  'network.proxy.type': 'http',
   'network.proxy.host': '',
   'network.proxy.port': '',
+  'network.proxy.username': '',
+  'network.proxy.password': '',
+  'network.proxy.dnsResolve': 'remote',
 
   'tray.enable': false,
   // 'tray.isToTray': false,

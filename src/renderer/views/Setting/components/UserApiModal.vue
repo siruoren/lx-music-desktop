@@ -12,7 +12,9 @@ material-modal(:show="modelValue" bg-close teleport="#view" @close="handleClose"
           p {{ api.description }}
           div
             base-checkbox(:id="`user_api_${api.id}`" v-model="api.allowShowUpdateAlert" :class="$style.checkbox" :label="$t('user_api__allow_show_update_alert')" @change="handleChangeAllowUpdateAlert(api, $event)")
-            base-checkbox(v-if="api.url" :id="`user_api_auto_update_${api.id}`" v-model="api.autoUpdate" :class="$style.checkbox" :label="$t('user_api__auto_update')" @change="handleChangeAutoUpdate(api, $event)")
+            div(v-if="api.url" :class="$style.autoUpdateRow")
+              base-checkbox(:id="`user_api_auto_update_${api.id}`" v-model="api.autoUpdate" :class="$style.checkbox" :label="$t('user_api__auto_update')" @change="handleChangeAutoUpdate(api, $event)")
+              span(v-if="api.lastUpdateTime" :class="$style.updateDate") {{ $t('user_api__last_update', { date: formatDate(api.lastUpdateTime) }) }}
         base-btn(:class="$style.listBtn" outline :aria-label="$t('user_api__btn_remove')" @click.stop="handleRemove(index)")
           svg(v-once version="1.1" xmlns="http://www.w3.org/2000/svg" xlink="http://www.w3.org/1999/xlink" viewBox="0 0 212.982 212.982" space="preserve")
             use(xlink:href="#icon-delete")
@@ -113,6 +115,12 @@ export default {
     handleOpenUrl(url) {
       void openUrl(url)
     },
+    formatDate(time) {
+      const date = new Date(time)
+      if (Number.isNaN(date.getTime())) return ''
+      const pad = num => String(num).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    },
     handleChangeAllowUpdateAlert(api, enable) {
       void setAllowShowUserApiUpdateAlert(api.id, enable)
     },
@@ -146,6 +154,24 @@ export default {
 
 .name {
   color: var(--color-primary);
+}
+
+.autoUpdateRow {
+  display: flex;
+  flex-flow: row wrap;
+  align-items: center;
+  .checkbox {
+    flex: none;
+  }
+}
+.updateDate {
+  flex: none;
+  margin-top: 3px;
+  margin-left: 10px;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--color-font-label);
+  opacity: .86;
 }
 
 .checkbox {

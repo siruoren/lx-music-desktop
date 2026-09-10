@@ -302,18 +302,34 @@ export const setPowerSaveBlocker = (enabled: boolean) => {
 }
 
 
-let envProxy: null | { host: string, port: number } = null
-export const getProxy = () => {
+type ProxyInfo = {
+  host: string
+  port: number
+  type: 'http' | 'socks5'
+  username: string
+  password: string
+  dnsResolve: 'local' | 'remote'
+}
+let envProxy: ProxyInfo | null = null
+export const getProxy = (): ProxyInfo | null => {
   if (global.lx.appSetting['network.proxy.enable'] && global.lx.appSetting['network.proxy.host']) {
     return {
       host: global.lx.appSetting['network.proxy.host'],
       port: parseInt(global.lx.appSetting['network.proxy.port'] || '80'),
+      type: global.lx.appSetting['network.proxy.type'],
+      username: global.lx.appSetting['network.proxy.username'],
+      password: global.lx.appSetting['network.proxy.password'],
+      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'] as 'local' | 'remote',
     }
   }
   if (envProxy) {
     return {
       host: envProxy.host,
       port: envProxy.port,
+      type: envProxy.type,
+      username: '',
+      password: '',
+      dnsResolve: 'remote',
     }
   } else {
     const envProxyStr = envParams.cmdParams['proxy-server']
@@ -322,6 +338,10 @@ export const getProxy = () => {
       return envProxy = {
         host,
         port: parseInt(port || '80'),
+        type: 'http',
+        username: '',
+        password: '',
+        dnsResolve: 'remote',
       }
     }
   }

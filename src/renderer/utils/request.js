@@ -6,27 +6,39 @@ import { bHh } from './musicSdk/options'
 import { deflateRaw } from 'zlib'
 import { proxy } from '@renderer/store'
 import { httpOverHttp, httpsOverHttp } from 'tunnel'
+import { SocksProxyAgent } from 'socks-proxy-agent'
 // import fs from 'fs'
 
 const httpsRxp = /^https:/
-const getRequestAgent = url => {
-  let options
+const getRequestAgent = (url, noProxy = false) => {
+  // noProxy：在线源导入 / 更新等请求始终直连，即使已启用代理
+  if (noProxy) return undefined
   if (proxy.enable && proxy.host) {
-    options = {
+    if (proxy.type === 'socks5') {
+      const auth = proxy.username
+        ? `${encodeURIComponent(proxy.username)}${proxy.password ? ':' + encodeURIComponent(proxy.password) : ''}@`
+        : ''
+      const scheme = proxy.dnsResolve === 'local' ? 'socks5' : 'socks5h'
+      return new SocksProxyAgent(`${scheme}://${auth}${proxy.host}:${proxy.port}`)
+    }
+    const options = {
       proxy: {
         host: proxy.host,
         port: proxy.port,
       },
     }
-  } else if (proxy.envProxy) {
-    options = {
+    return httpsRxp.test(url) ? httpsOverHttp(options) : httpOverHttp(options)
+  }
+  if (proxy.envProxy) {
+    const options = {
       proxy: {
         host: proxy.envProxy.host,
         port: proxy.envProxy.port,
       },
     }
+    return httpsRxp.test(url) ? httpsOverHttp(options) : httpOverHttp(options)
   }
-  return options ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)(options) : undefined
+  return undefined
 }
 
 
@@ -110,7 +122,10 @@ export const httpFetch = (url, options = { method: 'get' }) => {
   requestObj.promise = requestObj.promise.catch(err => {
     // console.log('出错', err)
     if (err.message === 'socket hang up') {
-      // window.globalObj.apiSource = 'temp'
+      // 通过代理请求时出现 socket hang up，通常是代理地址/端口/类型不对或代理未启动
+      if (!options.noProxy && proxy.enable && proxy.host) {
+        return Promise.reject(new Error(`${requestMsg.unachievable}（已通过代理 ${proxy.type}://${proxy.host}:${proxy.port} 发起请求但连接失败，请检查代理是否可用 / 类型是否匹配）`))
+      }
       return Promise.reject(new Error(requestMsg.unachievable))
     }
     switch (err.code) {
@@ -280,6 +295,7 @@ const fetchData = async(url, method, {
   headers = {},
   format = 'json',
   timeout = 15000,
+  noProxy = false,
   ...options
 }, callback) => {
   // console.log(url, options)
@@ -300,7 +316,7 @@ const fetchData = async(url, method, {
     method,
     headers: Object.assign({}, defaultHeaders, headers),
     timeout,
-    agent: getRequestAgent(url),
+    agent: getRequestAgent(url, noProxy),
     json: format === 'json',
   }, (err, resp, body) => {
     if (err) return callback(err, null)

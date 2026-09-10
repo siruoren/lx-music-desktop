@@ -6,9 +6,23 @@ dd
     .p
       base-checkbox(id="setting_network_proxy_enable" :model-value="appSetting['network.proxy.enable']" :label="$t('setting__is_enable')" @update:model-value="updateSetting({'network.proxy.enable': $event})")
     .p
+      label(:for="setting_network_proxy_type") {{ $t('setting__network_proxy_type') }}
+      select#setting_network_proxy_type(:class="$style.select" :value="appSetting['network.proxy.type']" @change="setType($event.target.value)")
+        option(value="http") HTTP
+        option(value="socks5") SOCKS5
+    .p
       base-input(:model-value="appSetting['network.proxy.host']" :placeholder="proxy.envProxy ? proxy.envProxy.host : $t('setting__network_proxy_host')" @update:model-value="setHost")
     .p
       base-input(:model-value="appSetting['network.proxy.port']" :placeholder="proxy.envProxy ? proxy.envProxy.port : $t('setting__network_proxy_port')" @update:model-value="setPort")
+    .p
+      base-input(:model-value="appSetting['network.proxy.username']" :placeholder="$t('setting__network_proxy_username')" @update:model-value="setUsername")
+    .p
+      base-input(:model-value="appSetting['network.proxy.password']" type="password" :placeholder="$t('setting__network_proxy_password')" @update:model-value="setPassword")
+    .p(v-if="appSetting['network.proxy.type'] === 'socks5'")
+      label(:for="setting_network_proxy_dns") {{ $t('setting__network_proxy_dns') }}
+      select#setting_network_proxy_dns(:class="$style.select" :value="appSetting['network.proxy.dnsResolve']" @change="setDnsResolve($event.target.value)")
+        option(value="local") {{ $t('setting__network_proxy_dns_local') }}
+        option(value="remote") {{ $t('setting__network_proxy_dns_remote') }}
 
 </template>
 
@@ -28,6 +42,18 @@ export default {
     const setPort = debounce(port => {
       updateSetting({ 'network.proxy.port': port.trim() })
     }, 500)
+    const setUsername = debounce(username => {
+      updateSetting({ 'network.proxy.username': username.trim() })
+    }, 500)
+    const setPassword = debounce(password => {
+      updateSetting({ 'network.proxy.password': password })
+    }, 500)
+    const setType = debounce(type => {
+      updateSetting({ 'network.proxy.type': type })
+    }, 300)
+    const setDnsResolve = debounce(dnsResolve => {
+      updateSetting({ 'network.proxy.dnsResolve': dnsResolve })
+    }, 300)
 
     onBeforeUnmount(() => {
       if (appSetting['network.proxy.enable'] && !appSetting['network.proxy.host']) proxy.enable = false
@@ -38,8 +64,34 @@ export default {
       updateSetting,
       setHost,
       setPort,
+      setType,
+      setDnsResolve,
       proxy,
     }
   },
 }
 </script>
+
+<style lang="less" module>
+@import '@renderer/assets/styles/layout.less';
+
+.select {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: @form-radius;
+  padding: 7px 8px;
+  color: var(--color-button-font);
+  outline: none;
+  transition: background-color 0.2s ease;
+  background-color: var(--color-primary-background);
+  font-size: 13.3px;
+
+  &:hover, &:focus {
+    background-color: var(--color-primary-background-hover);
+  }
+  &:active {
+    background-color: var(--color-primary-background-active);
+  }
+}
+</style>

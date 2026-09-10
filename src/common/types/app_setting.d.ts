@@ -616,6 +616,11 @@ declare global {
       'network.proxy.enable': boolean
 
       /**
+       * 代理类型
+       */
+      'network.proxy.type': 'http' | 'socks5'
+
+      /**
        * 代理服务器地址
        */
       'network.proxy.host': string
@@ -624,6 +629,17 @@ declare global {
        * 代理服务器端口号
        */
       'network.proxy.port': string
+
+      /**
+       * 代理服务器用户名（SOCKS5 鉴权，留空表示无账户密码）
+       */
+      'network.proxy.username': string
+
+      /**
+       * 代理服务器密码（SOCKS5 鉴权，留空表示无账户密码）
+       */
+      'network.proxy.password': string
+      'network.proxy.dnsResolve': 'local' | 'remote'
 
       /**
        * 是否启用托盘

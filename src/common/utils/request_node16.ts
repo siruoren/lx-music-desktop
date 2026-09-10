@@ -7,6 +7,7 @@ import {
   setGlobalDispatcher,
   type Dispatcher,
 } from 'undici'
+import { createSocksDispatcher } from './socksProxyDispatcher'
 
 const defaultOptions: Options = {
   timeout: 15000,
@@ -16,7 +17,7 @@ const defaultOptions: Options = {
   },
   maxRedirect: 5,
 } as const
-let proxyAgent: ProxyAgent | null = null
+let proxyAgent: Dispatcher | null = null
 let globalDispatcher = getGlobalDispatcher()
 const buildDispatcher = () => {
   return proxyAgent ?? globalDispatcher
@@ -25,12 +26,28 @@ const buildDispatcher = () => {
 setGlobalDispatcher(buildDispatcher())
 
 export const setProxy = (url?: string) => {
-  proxyAgent = url ? new ProxyAgent(url) : null
+  proxyAgent = url
+    ? (url.startsWith('socks5')
+      ? createSocksDispatcher(url)
+      : new ProxyAgent(url))
+    : null
   setGlobalDispatcher(buildDispatcher())
 }
-export const setProxyByHost = (host?: string, port?: string) => {
-  console.log(host)
-  setProxy(host ? `http://${host}:${port}` : undefined)
+export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string, username?: string, password?: string, dnsResolve: 'local' | 'remote' = 'remote') => {
+  if (!host) {
+    setProxy(undefined)
+    return
+  }
+  if (type === 'socks5') {
+    const auth = username
+      ? `${encodeURIComponent(username)}${password ? ':' + encodeURIComponent(password) : ''}@`
+      : ''
+    // socks5 = 本机本地 DNS 解析；socks5h = 由代理服务器远程 DNS 解析
+    const scheme = dnsResolve === 'local' ? 'socks5' : 'socks5h'
+    setProxy(`${scheme}://${auth}${host}:${port}`)
+    return
+  }
+  setProxy(`${type}://${host}:${port}`)
 }
 const CONTENT_TYPE = {
   json: 'application/json',

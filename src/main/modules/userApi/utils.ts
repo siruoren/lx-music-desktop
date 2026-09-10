@@ -125,6 +125,8 @@ export const importApi = async(scriptRaw: string, url?: string): Promise<LX.User
     // 在线导入的源默认开启自动更新，本地导入的源没有回源地址，无法自动更新
     autoUpdate: !!url,
     url,
+    // 在线导入时就已经拉取过一次脚本，记为一次更新
+    lastUpdateTime: url ? Date.now() : undefined,
   }
   userApis.push(apiInfo)
   scripts.set(apiInfo.id, script)
@@ -136,13 +138,25 @@ export const importApi = async(scriptRaw: string, url?: string): Promise<LX.User
  * 用新的脚本内容更新已存在的源
  * 更新时保持 id 及用户的勾选状态（allowShowUpdateAlert、autoUpdate、url）不变，
  * 这样即使新脚本里源名称、描述等信息发生了变更，原有的勾选状态也不会丢失
+ *
+ * 脚本内容没有变化时不写入、不刷新更新时间，返回 changed = false，
+ * 避免每次启动都把「最近更新时间」刷新一遍
  */
-export const updateApi = async(id: string, scriptRaw: string): Promise<LX.UserApi.UserApiInfo> => {
+export const updateApi = async(id: string, scriptRaw: string): Promise<LX.UserApi.UserApiUpdateResult> => {
   const targetApi = userApis?.find(api => api.id == id)
   if (!targetApi) throw new Error('更新失败，源不存在')
 
   const scriptInfo = parseScriptInfo(scriptRaw)
   const script = await deflateScript(scriptRaw)
+
+  if (scripts.get(targetApi.id) === script) {
+    // 脚本内容一致，无需写入；此前没有记录过更新时间时补一次基线，保证界面能显示日期
+    if (targetApi.lastUpdateTime == null) {
+      targetApi.lastUpdateTime = Date.now()
+      saveData()
+    }
+    return { apiInfo: { ...targetApi }, changed: false }
+  }
 
   Object.assign(targetApi, {
     ...scriptInfo,
@@ -150,6 +164,7 @@ export const updateApi = async(id: string, scriptRaw: string): Promise<LX.UserAp
     allowShowUpdateAlert: targetApi.allowShowUpdateAlert,
     autoUpdate: targetApi.autoUpdate,
     url: targetApi.url,
+    lastUpdateTime: Date.now(),
   })
   // sources 由脚本运行时上报，脚本已变更，需等重新初始化后再写入
   delete targetApi.sources
@@ -157,7 +172,7 @@ export const updateApi = async(id: string, scriptRaw: string): Promise<LX.UserAp
   scripts.set(targetApi.id, script)
   saveData()
 
-  return { ...targetApi }
+  return { apiInfo: { ...targetApi }, changed: true }
 }
 
 export const removeApi = (ids: string[]) => {
