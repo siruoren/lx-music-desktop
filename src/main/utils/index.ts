@@ -311,6 +311,7 @@ export const getProxy = () => {
       type: global.lx.appSetting['network.proxy.type'],
       username: global.lx.appSetting['network.proxy.username'],
       password: global.lx.appSetting['network.proxy.password'],
+      dnsResolve: global.lx.appSetting['network.proxy.dnsResolve'],
     }
   }
   if (envProxy) {
@@ -320,6 +321,7 @@ export const getProxy = () => {
       type: envProxy.type,
       username: '',
       password: '',
+      dnsResolve: 'remote',
     }
   } else {
     const envProxyStr = envParams.cmdParams['proxy-server']
@@ -331,6 +333,7 @@ export const getProxy = () => {
         type: 'http',
         username: '',
         password: '',
+        dnsResolve: 'remote',
       }
     }
   }

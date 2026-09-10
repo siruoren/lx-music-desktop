@@ -11,7 +11,8 @@ const getRequestAgent = (url, proxy) => {
     const auth = proxy.username
       ? `${encodeURIComponent(proxy.username)}${proxy.password ? ':' + encodeURIComponent(proxy.password) : ''}@`
       : ''
-    return new SocksProxyAgent(`socks5h://${auth}${proxy.host}:${proxy.port}`)
+    const scheme = proxy.dnsResolve === 'local' ? 'socks5' : 'socks5h'
+    return new SocksProxyAgent(`${scheme}://${auth}${proxy.host}:${proxy.port}`)
   }
   return (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({ proxy })
 }

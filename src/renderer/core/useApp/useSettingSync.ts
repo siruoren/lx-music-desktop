@@ -113,4 +113,7 @@ export default () => {
   watch(() => appSetting['network.proxy.password'], password => {
     proxy.password = password
   })
+  watch(() => appSetting['network.proxy.dnsResolve'], dnsResolve => {
+    proxy.dnsResolve = dnsResolve
+  })
 }

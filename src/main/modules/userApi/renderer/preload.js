@@ -18,6 +18,7 @@ const proxy = {
   port: '',
   username: '',
   password: '',
+  dnsResolve: 'remote',
 }
 let isShowedUpdateAlert = false
 const EVENT_NAMES = {
@@ -55,7 +56,8 @@ const getRequestAgent = url => {
     const auth = proxy.username
       ? `${encodeURIComponent(proxy.username)}${proxy.password ? ':' + encodeURIComponent(proxy.password) : ''}@`
       : ''
-    return new SocksProxyAgent(`socks5h://${auth}${proxy.host}:${proxy.port}`)
+    const scheme = proxy.dnsResolve === 'local' ? 'socks5' : 'socks5h'
+    return new SocksProxyAgent(`${scheme}://${auth}${proxy.host}:${proxy.port}`)
   }
   return (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)({
     proxy: {
@@ -200,6 +202,7 @@ const initEnv = (userApi) => {
   proxy.type = userApi.proxy.type
   proxy.host = userApi.proxy.host
   proxy.port = userApi.proxy.port
+  proxy.dnsResolve = userApi.proxy.dnsResolve
 
   contextBridge.exposeInMainWorld('lx', {
     EVENT_NAMES,
@@ -387,4 +390,5 @@ ipcRenderer.on(USER_API_RENDERER_EVENT_NAME.proxyUpdate, (event, data) => {
   proxy.type = data.type
   proxy.host = data.host
   proxy.port = data.port
+  proxy.dnsResolve = data.dnsResolve
 })

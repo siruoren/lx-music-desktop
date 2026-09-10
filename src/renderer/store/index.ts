@@ -14,6 +14,7 @@ export const proxy: {
   port: string
   username: string
   password: string
+  dnsResolve: 'local' | 'remote'
 
   envProxy?: {
     host: string
@@ -26,6 +27,7 @@ export const proxy: {
   port: '',
   username: '',
   password: '',
+  dnsResolve: 'remote',
 }
 export const sync: {
   enable: boolean

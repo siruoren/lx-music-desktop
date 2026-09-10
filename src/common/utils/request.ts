@@ -60,14 +60,18 @@ export const setProxy = (url?: string) => {
     : null
   setGlobalDispatcher(buildDispatcher(redirectDispatcher))
 }
-export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string, username?: string, password?: string) => {
+export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string, username?: string, password?: string, dnsResolve: 'local' | 'remote' = 'remote') => {
   if (!host) {
     setProxy(undefined)
     return
   }
-  if (type === 'socks5' && username) {
-    const auth = `${encodeURIComponent(username)}${password ? ':' + encodeURIComponent(password) : ''}@`
-    setProxy(`socks5://${auth}${host}:${port}`)
+  if (type === 'socks5') {
+    const auth = username
+      ? `${encodeURIComponent(username)}${password ? ':' + encodeURIComponent(password) : ''}@`
+      : ''
+    // socks5 = 本机本地 DNS 解析；socks5h = 由代理服务器远程 DNS 解析
+    const scheme = dnsResolve === 'local' ? 'socks5' : 'socks5h'
+    setProxy(`${scheme}://${auth}${host}:${port}`)
     return
   }
   setProxy(`${type}://${host}:${port}`)

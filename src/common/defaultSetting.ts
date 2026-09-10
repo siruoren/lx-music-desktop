@@ -137,6 +137,7 @@ const defaultSetting: LX.AppSetting = {
   'network.proxy.port': '',
   'network.proxy.username': '',
   'network.proxy.password': '',
+  'network.proxy.dnsResolve': 'remote',
 
   'tray.enable': false,
   // 'tray.isToTray': false,

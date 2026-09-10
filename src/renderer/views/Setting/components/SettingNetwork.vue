@@ -18,6 +18,11 @@ dd
       base-input(:model-value="appSetting['network.proxy.username']" :placeholder="$t('setting__network_proxy_username')" @update:model-value="setUsername")
     .p
       base-input(:model-value="appSetting['network.proxy.password']" type="password" :placeholder="$t('setting__network_proxy_password')" @update:model-value="setPassword")
+    .p(v-if="appSetting['network.proxy.type'] === 'socks5'")
+      label(:for="setting_network_proxy_dns") {{ $t('setting__network_proxy_dns') }}
+      select#setting_network_proxy_dns(:class="$style.select" :value="appSetting['network.proxy.dnsResolve']" @change="setDnsResolve($event.target.value)")
+        option(value="local") {{ $t('setting__network_proxy_dns_local') }}
+        option(value="remote") {{ $t('setting__network_proxy_dns_remote') }}
 
 </template>
 
@@ -46,6 +51,9 @@ export default {
     const setType = debounce(type => {
       updateSetting({ 'network.proxy.type': type })
     }, 300)
+    const setDnsResolve = debounce(dnsResolve => {
+      updateSetting({ 'network.proxy.dnsResolve': dnsResolve })
+    }, 300)
 
     onBeforeUnmount(() => {
       if (appSetting['network.proxy.enable'] && !appSetting['network.proxy.host']) proxy.enable = false
@@ -57,6 +65,7 @@ export default {
       setHost,
       setPort,
       setType,
+      setDnsResolve,
       proxy,
     }
   },

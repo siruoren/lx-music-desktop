@@ -246,6 +246,7 @@ export const listenerAppEvent = (startApp: () => void) => {
         proxy.port ? String(proxy.port) : undefined,
         proxy.username,
         proxy.password,
+        proxy.dnsResolve,
       )
     } else setProxyByHost()
   }

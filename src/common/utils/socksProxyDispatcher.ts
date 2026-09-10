@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises'
 import { Agent, type Dispatcher } from 'undici'
 import { SocksClient } from 'socks'
 
@@ -9,6 +10,9 @@ import { SocksClient } from 'socks'
  */
 export const createSocksDispatcher = (proxyUrl: string): Dispatcher => {
   const { hostname, port, username, password } = new URL(proxyUrl)
+  // socks5h 前缀：由 SOCKS5 代理做远程 DNS 解析（域名交给代理解析）
+  // socks5  前缀：本机先做本地 DNS 解析，再把解析出的 IP 交给代理建隧道
+  const isRemoteDns = proxyUrl.startsWith('socks5h')
   const proxy: {
     host: string
     port: number
@@ -25,11 +29,20 @@ export const createSocksDispatcher = (proxyUrl: string): Dispatcher => {
   if (password) proxy.password = password
   return new Agent({
     connect: async(opts) => {
+      let host = opts.hostname ?? (opts as { host?: string }).host ?? ''
+      if (!isRemoteDns) {
+        // 本地 DNS 解析：先在本机把域名解析成 IP，再把 IP 交给 SOCKS 代理建立隧道
+        try {
+          const { address } = await lookup(host)
+          host = address
+        } catch {
+          // 解析失败时回退为把原始 host 交给代理（代理侧再尝试解析）
+        }
+      }
       const { socket } = await SocksClient.createConnection({
         proxy,
         command: 'connect',
-        // 传入字符串 host 让 SOCKS5 代理做远程 DNS 解析（与 socks5h 等价）
-        destination: { host: opts.hostname ?? (opts as { host?: string }).host ?? '', port: Number(opts.port) },
+        destination: { host, port: Number(opts.port) },
       })
       return socket
     },
