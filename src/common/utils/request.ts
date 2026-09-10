@@ -5,10 +5,10 @@ import {
   interceptors,
   request as nodeRrequest,
   ProxyAgent,
-  Socks5ProxyAgent,
   setGlobalDispatcher,
   type Dispatcher,
 } from 'undici'
+import { createSocksDispatcher } from './socksProxyDispatcher'
 
 const defaultOptions: Options = {
   timeout: 15000,
@@ -29,7 +29,7 @@ const dispatchers = [
   }),
   // interceptors.responseError(),
 ] as const
-let proxyAgent: ProxyAgent | null = null
+let proxyAgent: Dispatcher | null = null
 let globalDispatcher = getGlobalDispatcher()
 const buildDispatcher = (redirectDispatcher: Dispatcher.DispatcherComposeInterceptor | null, retryNum = 3) => {
   const otherInterceptors =
@@ -55,7 +55,7 @@ setGlobalDispatcher(buildDispatcher(redirectDispatcher))
 export const setProxy = (url?: string) => {
   proxyAgent = url
     ? (url.startsWith('socks5')
-      ? new Socks5ProxyAgent(url)
+      ? createSocksDispatcher(url)
       : new ProxyAgent(url))
     : null
   setGlobalDispatcher(buildDispatcher(redirectDispatcher))
