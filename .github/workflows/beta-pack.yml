@@ -311,14 +311,12 @@ jobs:
 
       - name: Prepare release info
         id: release_info
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           TAG="beta_$(date -u +'%Y%m%d')"
-          # 同一秒内重复触发时避免标签冲突
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          # 同一天重复触发时避免标签冲突（用 git ls-remote 查询，不需要 token）
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             TAG="${TAG}-${GITHUB_RUN_ID}"
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
@@ -337,44 +335,42 @@ jobs:
           } > notes.md
 
       - name: Generate checksums
+        id: checksums
         run: |
           set -euo pipefail
           mkdir -p artifacts
           cd artifacts
-          find . -type f -print0 | sort -z | xargs -0 -r sha256sum | sed 's| \./| |' > ../SHA256SUMS.txt
-          cat ../SHA256SUMS.txt
+          # 排除自身，避免 shell 先把重定向目标创建出来后被计入校验
+          find . -type f ! -name 'SHA256SUMS.txt' -print0 | sort -z | xargs -0 -r sha256sum | sed 's| \./| |' > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
+          cd "$GITHUB_WORKSPACE"
           {
             echo
             echo "## 文件清单"
             echo
-          } >> ../notes.md
+          } >> notes.md
           while IFS= read -r -d '' file; do
-            echo "- \`${file#./}\`" >> ../notes.md
-          done < <(find . -type f -print0 | sort -z)
+            echo "- \`${file#./}\`" >> notes.md
+          done < <(cd artifacts && find . -type f -print0 | sort -z)
 
-      - name: Create beta release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ steps.release_info.outputs.tag }}" \
-            --target "${GITHUB_SHA}" \
-            --title "${{ steps.release_info.outputs.tag }}" \
-            --notes-file notes.md \
-            --prerelease
+          # 待上传文件清单（换行分隔的显式路径，避免 glob 匹配不稳定）
+          {
+            echo "files<<__LX_ARTIFACTS_EOF__"
+            find artifacts -type f -print | sort
+            echo "__LX_ARTIFACTS_EOF__"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload packages to release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          files=()
-          while IFS= read -r -d '' file; do
-            files+=("${file}")
-          done < <(find artifacts -type f -print0 | sort -z)
-
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "::warning::没有找到可上传的安装包"
-            exit 0
-          fi
-          gh release upload "${{ steps.release_info.outputs.tag }}" "${files[@]}" SHA256SUMS.txt --clobber
+      # action-gh-release 的 token 默认取自 ${{ github.token }}，
+      # 无需在 workflow 里显式配置 secrets.GITHUB_TOKEN，也不需要额外的 PAT
+      - name: Create beta release and upload packages
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
+          prerelease: true
+          draft: false
+          overwrite_files: true
+          files: ${{ steps.checksums.outputs.files }}
