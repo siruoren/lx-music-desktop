@@ -57,6 +57,9 @@ jobs:
           NPM_CACHE: ${{ env.NPM_CACHE }}
         uses: ./.github/actions/setup
 
+      - name: Append -siruoren to app version
+        run: node build-config/append-version-suffix.js
+
       - name: Build src code
         run: |
           git status --porcelain
@@ -123,6 +126,9 @@ jobs:
           npm install undici@5
           Set-Content -Path .\src\common\utils\request.ts -Value "export * from './request_node16'"
 
+      - name: Append -siruoren to app version
+        run: node build-config/append-version-suffix.js
+
       - name: Build src code
         env:
           BUILD_WIN7: true
@@ -184,6 +190,9 @@ jobs:
           NPM_CACHE: ${{ env.NPM_CACHE }}
         uses: ./.github/actions/setup
 
+      - name: Append -siruoren to app version
+        run: node build-config/append-version-suffix.js
+
       - name: Build src code
         run: |
           git status --porcelain
@@ -231,6 +240,9 @@ jobs:
         env:
           NPM_CACHE: ${{ env.NPM_CACHE }}
         uses: ./.github/actions/setup
+
+      - name: Append -siruoren to app version
+        run: node build-config/append-version-suffix.js
 
       - name: Build src code
         run: |
