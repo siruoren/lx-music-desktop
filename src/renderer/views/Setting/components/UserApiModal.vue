@@ -29,7 +29,7 @@ material-modal(:show="modelValue" bg-close teleport="#view" @close="handleClose"
       base-btn(:class="$style.footerBtn" @click="isShowOnlineImportModal = true") {{ $t('user_api__btn_import_online') }}
       base-btn(:class="$style.footerBtn" @click="handleImport") {{ $t('user_api__btn_import') }}
       //- base-btn(:class="$style.footerBtn" @click="handleExport") {{ $t('user_api__btn_export') }}
-    UserApiOnlineImportModal(v-model:show="isShowOnlineImportModal" @import="importUserApi")
+    UserApiOnlineImportModal(v-model:show="isShowOnlineImportModal" @import="importUserApi" @import-default="importUserApiList")
 </template>
 
 <script>
@@ -73,6 +73,31 @@ export default {
       }).catch((err) => {
         void dialog(this.$t('user_api_import__failed', { message: err.message }))
       })
+    },
+    async importUserApiList(items) {
+      this.isShowOnlineImportModal = false
+      const existingUrls = new Set(userApi.list.filter(api => api.url).map(api => api.url))
+      let success = 0
+      let failed = 0
+      let lastList = userApi.list
+      for (const { script, url } of items) {
+        if (existingUrls.has(url)) continue
+        try {
+          const { apiList } = await importUserApi(script, url)
+          lastList = apiList
+          existingUrls.add(url)
+          success++
+        } catch (err) {
+          failed++
+          console.log('Import default user api failed:', url, err)
+        }
+      }
+      userApi.list = lastList
+      if (failed > 0) {
+        void dialog(this.$t('user_api_default_import_failed', { success, failed }))
+      } else {
+        void dialog(this.$t('user_api_default_import_success', { success }))
+      }
     },
     handleImport() {
       if (this.userApi.list.length > 20) {

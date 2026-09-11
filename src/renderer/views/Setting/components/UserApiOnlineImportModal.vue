@@ -10,8 +10,25 @@
         :placeholder="$t('user_api_import_online__input_tip')"
         @submit="handleSubmit" @blur="verify"
       />
+
+      <div :class="$style.dirBox">
+        <label :class="$style.dirLabel">{{ $t('user_api_import_dir_url') }}</label>
+        <div :class="$style.dirRow">
+          <base-input
+            ref="dirInput"
+            v-model="dirUrl"
+            :class="$style.dirInput"
+            type="url"
+            :placeholder="$t('user_api_import_dir_url_tip')"
+            @submit="handleSaveDir"
+          />
+          <base-btn :class="$style.btn" :disabled="disabled" @click="handleSaveDir">{{ $t('user_api_import_dir_save') }}</base-btn>
+        </div>
+      </div>
+
       <div :class="$style.footer">
         <base-btn :class="$style.btn" @click="handleClose">{{ $t('btn_close') }}</base-btn>
+        <base-btn :class="$style.btn" :disabled="disabled" @click="handleDefaultImport">{{ defaultBtnText }}</base-btn>
         <base-btn :class="$style.btn" :disabled="disabled" @click="handleSubmit">{{ btnText }}</base-btn>
       </div>
     </main>
@@ -21,6 +38,7 @@
 <script>
 import { dialog } from '@renderer/plugins/Dialog'
 import { httpFetch } from '@renderer/utils/request'
+import { appSetting, updateSetting } from '@renderer/store/setting'
 
 export default {
   props: {
@@ -29,20 +47,24 @@ export default {
       default: false,
     },
   },
-  emits: ['update:show', 'import'],
+  emits: ['update:show', 'import', 'import-default'],
   data() {
     return {
       url: '',
       disabled: false,
       btnText: '',
+      defaultBtnText: '',
+      dirUrl: '',
     }
   },
   watch: {
     show(n) {
       if (n) {
         this.url = ''
+        this.dirUrl = appSetting['userApi.importDirUrl'] || ''
         this.disabled = false
         this.btnText = this.$t('user_api_import_online__input_confirm')
+        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
       }
     },
   },
@@ -79,6 +101,101 @@ export default {
       this.$emit('import', script, url)
       this.handleClose()
     },
+    buildContentsApiUrl(raw) {
+      const url = (raw || '').trim()
+      if (!url) return ''
+      // 已是 contents API 地址
+      let m = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/contents(\/.*)?$/)
+      if (m) {
+        const base = `https://api.github.com/repos/${m[1]}/${m[2]}/contents${m[3] || ''}`
+        return base + (base.includes('?') ? '&' : '?') + 'per_page=100'
+      }
+      // github.com 的 tree/blob 页面地址，转换为 contents API
+      m = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/(tree|blob)\/([^/]+)(?:\/(.*))?)?$/)
+      if (m) {
+        const owner = m[1]
+        const repo = m[2]
+        const branch = m[4] || 'main'
+        const path = m[5] || ''
+        const contentsPath = path ? `/${path}` : ''
+        return `https://api.github.com/repos/${owner}/${repo}/contents${contentsPath}?ref=${branch}&per_page=100`
+      }
+      return ''
+    },
+    handleSaveDir() {
+      const raw = (this.dirUrl || '').trim()
+      if (!raw) {
+        void dialog(this.$t('user_api_import_dir_empty'))
+        return
+      }
+      updateSetting({ 'userApi.importDirUrl': raw })
+      // 保存后自动刷新重新导入
+      this.handleDefaultImport(raw)
+    },
+    async handleDefaultImport(address) {
+      const addr = (address || '').trim() || (this.dirUrl || '').trim() || (appSetting['userApi.importDirUrl'] || '')
+      if (!addr) {
+        void dialog(this.$t('user_api_import_dir_empty_hint'))
+        if (this.$refs.dirInput && this.$refs.dirInput.focus) this.$refs.dirInput.focus()
+        return
+      }
+      const listUrl = this.buildContentsApiUrl(addr)
+      if (!listUrl) {
+        void dialog(this.$t('user_api_import_dir_invalid'))
+        return
+      }
+
+      this.disabled = true
+      this.btnText = this.$t('user_api_import_online__input_confirm')
+      this.defaultBtnText = this.$t('user_api_import_online__default_loading')
+
+      let listResp
+      try {
+        listResp = await httpFetch(listUrl, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+      } catch (err) {
+        void dialog(this.$t('user_api_import__failed', { message: err.message }))
+        this.disabled = false
+        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
+        return
+      }
+
+      const entries = listResp.body
+      if (!Array.isArray(entries)) {
+        void dialog(this.$t('user_api_import__failed', { message: 'Unexpected response' }))
+        this.disabled = false
+        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
+        return
+      }
+      const jsFiles = entries.filter(e => e && e.type === 'file' && typeof e.name === 'string' && e.name.endsWith('.js') && e.download_url)
+      if (!jsFiles.length) {
+        void dialog(this.$t('user_api_default_import_empty'))
+        this.disabled = false
+        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
+        return
+      }
+
+      const items = []
+      for (const file of jsFiles) {
+        try {
+          const resp = await httpFetch(file.download_url, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+          const script = resp.body
+          if (typeof script != 'string' || !script.length) continue
+          if (script.length > 9_000_000) continue
+          items.push({ script, url: file.download_url })
+        } catch (err) {
+          console.log('Download default user api script failed:', file.name, err)
+        }
+      }
+
+      this.disabled = false
+      this.defaultBtnText = this.$t('user_api_import_online__btn_default')
+      if (!items.length) {
+        void dialog(this.$t('user_api_default_import_empty'))
+        return
+      }
+      this.$emit('import-default', items)
+      this.handleClose()
+    },
   },
 }
 </script>
@@ -109,6 +226,28 @@ export default {
 .input {
   // width: 100%;
   // height: 26px;
+  padding: 8px 8px;
+}
+
+.dirBox {
+  margin-top: 14px;
+  display: flex;
+  flex-flow: column nowrap;
+  gap: 6px;
+}
+.dirLabel {
+  font-size: 13px;
+  color: var(--color-font-label);
+}
+.dirRow {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 8px;
+}
+.dirInput {
+  flex: auto;
+  min-width: 0;
   padding: 8px 8px;
 }
 .footer {

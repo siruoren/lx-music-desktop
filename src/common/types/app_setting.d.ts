@@ -34,6 +34,11 @@ declare global {
       'common.apiSource': string
 
       /**
+       * 默认导入目录地址（在线源），由用户在设置中填写，不内置任何地址
+       */
+      'userApi.importDirUrl': string
+
+      /**
        * 音源名称类型，原名、别名
        */
       'common.sourceNameType': 'alias' | 'real'
