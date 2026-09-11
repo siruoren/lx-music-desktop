@@ -28,7 +28,6 @@
 
       <div :class="$style.footer">
         <base-btn :class="$style.btn" @click="handleClose">{{ $t('btn_close') }}</base-btn>
-        <base-btn :class="$style.btn" :disabled="disabled" @click="handleDefaultImport">{{ defaultBtnText }}</base-btn>
         <base-btn :class="$style.btn" :disabled="disabled" @click="handleSubmit">{{ btnText }}</base-btn>
       </div>
     </main>
@@ -51,10 +50,9 @@ export default {
   data() {
     return {
       url: '',
+      dirUrl: '',
       disabled: false,
       btnText: '',
-      defaultBtnText: '',
-      dirUrl: '',
     }
   },
   watch: {
@@ -64,7 +62,6 @@ export default {
         this.dirUrl = appSetting['userApi.importListUrl'] || ''
         this.disabled = false
         this.btnText = this.$t('user_api_import_online__input_confirm')
-        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
       }
     },
   },
@@ -77,29 +74,121 @@ export default {
       return this.url
     },
     async handleSubmit() {
-      let url = this.verify()
-      if (!url) return
+      const singleUrl = this.verify()
+      const listUrl = (this.dirUrl || '').trim() || (appSetting['userApi.importListUrl'] || '').trim()
+      if (!singleUrl && !listUrl) return
+
       this.disabled = true
       this.btnText = this.$t('user_api_import_online__input_loading')
-      let script
+
+      let importedCount = 0
       try {
-        script = await httpFetch(url, { follow_max: 3, noProxy: true }).promise.then(resp => resp.body)
-      } catch (err) {
-        void dialog(this.$t('user_api_import__failed', { message: err.message }))
-        return
+        // 1) 列表文件非空时优先导入列表
+        if (listUrl) {
+          importedCount += await this.importList(listUrl)
+        }
+        // 2) 再导入单个链接
+        if (singleUrl) {
+          if (await this.importSingle(singleUrl)) importedCount += 1
+        }
       } finally {
         this.disabled = false
         this.btnText = this.$t('user_api_import_online__input_confirm')
       }
+
+      if (importedCount > 0) this.handleClose()
+    },
+    async importSingle(url) {
+      let resp
+      try {
+        resp = await httpFetch(url, { follow_max: 3, noProxy: true }).promise
+      } catch (err) {
+        void dialog(this.$t('user_api_import__failed', { message: err.message }))
+        return false
+      }
+      if (resp.statusCode !== 200) {
+        void dialog(this.$t('user_api_import__failed', { message: `HTTP ${resp.statusCode}` }))
+        return false
+      }
+      const script = resp.body
+      if (typeof script !== 'string' || !script.length) {
+        void dialog(this.$t('user_api_import__failed', { message: 'Empty script' }))
+        return false
+      }
       if (script.length > 9_000_000) {
-        void dialog(this.$t('user_api_import__failed', {
-          message: 'Too large script',
-          confirm: this.$t('ok'),
-        }))
-        return
+        void dialog(this.$t('user_api_import__failed', { message: 'Too large script' }))
+        return false
       }
       this.$emit('import', script, url)
-      this.handleClose()
+      return true
+    },
+    async importList(addr) {
+      let resp
+      try {
+        resp = await httpFetch(addr, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+      } catch (err) {
+        void dialog(this.$t('user_api_import__failed', { message: err.message }))
+        return 0
+      }
+      if (resp.statusCode !== 200) {
+        void dialog(this.$t('user_api_import__failed', { message: `HTTP ${resp.statusCode}` }))
+        return 0
+      }
+
+      const listText = typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body)
+      const urls = listText.split(/\r?\n/).map(l => l.trim()).filter(l => /^https?:\/\/.+\.js(\?.*)?$/i.test(l))
+      if (!urls.length) {
+        void dialog(this.$t('user_api_default_import_empty'))
+        return 0
+      }
+
+      // 列表文件所在目录：当其中 URL 指向父级（少了该目录段）导致 404 时，补上目录段重试
+      const listDir = addr.replace(/\/[^/]*$/, '/')
+      const items = []
+      const failed = []
+      for (const url of urls) {
+        const r = await this.fetchScript(url)
+        let script = r.script
+        let usedUrl = url
+        if (!script && r.code === 404) {
+          const name = url.split('/').pop()
+          const fallback = listDir + name
+          if (fallback !== url) {
+            const r2 = await this.fetchScript(fallback)
+            if (r2.script) {
+              script = r2.script
+              usedUrl = fallback
+            }
+          }
+        }
+        if (script && script.length && script.length <= 9_000_000) {
+          items.push({ script, url: usedUrl })
+        } else {
+          failed.push(url)
+        }
+      }
+
+      if (!items.length) {
+        void dialog(this.$t('user_api_default_import_empty'))
+        return 0
+      }
+      this.$emit('import-default', items)
+      if (failed.length) {
+        void dialog(this.$t('user_api_default_import_failed', { success: items.length, failed: failed.length }))
+      }
+      return items.length
+    },
+    async fetchScript(url) {
+      try {
+        const resp = await httpFetch(url, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+        const code = resp.statusCode || 0
+        const s = typeof resp.body === 'string' ? resp.body : null
+        if (code === 200 && s && s.length) return { code, script: s }
+        return { code, script: null }
+      } catch (err) {
+        console.log('Download default user api script failed:', url, err)
+        return { code: 0, script: null }
+      }
     },
     handleSaveDir() {
       const raw = (this.dirUrl || '').trim()
@@ -107,67 +196,12 @@ export default {
         void dialog(this.$t('user_api_import_list_empty'))
         return
       }
-      updateSetting({ 'userApi.importListUrl': raw })
-      // 保存后自动刷新重新导入
-      this.handleDefaultImport(raw)
-    },
-    async handleDefaultImport(address) {
-      const addr = (address || '').trim() || (this.dirUrl || '').trim() || (appSetting['userApi.importListUrl'] || '')
-      if (!addr) {
-        void dialog(this.$t('user_api_import_list_empty_hint'))
-        if (this.$refs.dirInput && this.$refs.dirInput.focus) this.$refs.dirInput.focus()
-        return
-      }
-      if (!/^https?:\/\//.test(addr)) {
+      if (!/^https?:\/\//.test(raw)) {
         void dialog(this.$t('user_api_import_list_invalid'))
         return
       }
-
-      this.disabled = true
-      this.btnText = this.$t('user_api_import_online__input_confirm')
-      this.defaultBtnText = this.$t('user_api_import_online__default_loading')
-
-      // 下载列表文件（内容为每行一个 .js 地址）
-      let listText
-      try {
-        const resp = await httpFetch(addr, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
-        listText = typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body)
-      } catch (err) {
-        void dialog(this.$t('user_api_import__failed', { message: err.message }))
-        this.disabled = false
-        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
-        return
-      }
-
-      const urls = listText.split(/\r?\n/).map(l => l.trim()).filter(l => /^https?:\/\/.+\.js(\?.*)?$/i.test(l))
-      if (!urls.length) {
-        void dialog(this.$t('user_api_default_import_empty'))
-        this.disabled = false
-        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
-        return
-      }
-
-      const items = []
-      for (const url of urls) {
-        try {
-          const resp = await httpFetch(url, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
-          const script = resp.body
-          if (typeof script != 'string' || !script.length) continue
-          if (script.length > 9_000_000) continue
-          items.push({ script, url })
-        } catch (err) {
-          console.log('Download default user api script failed:', url, err)
-        }
-      }
-
-      this.disabled = false
-      this.defaultBtnText = this.$t('user_api_import_online__btn_default')
-      if (!items.length) {
-        void dialog(this.$t('user_api_default_import_empty'))
-        return
-      }
-      this.$emit('import-default', items)
-      this.handleClose()
+      updateSetting({ 'userApi.importListUrl': raw })
+      void dialog(this.$t('user_api_import_list_saved'))
     },
   },
 }
