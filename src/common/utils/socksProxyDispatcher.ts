@@ -28,6 +28,8 @@ export const createSocksDispatcher = (proxyUrl: string): Dispatcher => {
   if (username) proxy.userId = username
   if (password) proxy.password = password
   return new Agent({
+    // undici 以 await 方式调用该 connector，异步返回 socket 是预期行为，非 promise 误用
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     connect: async(opts) => {
       let host = opts.hostname ?? (opts as { host?: string }).host ?? ''
       if (!isRemoteDns) {

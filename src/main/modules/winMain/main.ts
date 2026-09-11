@@ -71,13 +71,16 @@ export const createWindow = () => {
   // 需通过 login 事件回传凭据；无账户密码时直接放行。
   // 注：当前 electron 类型定义的 Session.on 未包含 'login' 重载，这里做一次最小范围的类型断言。
   const onLogin = (event: Electron.Event, authInfo: Electron.AuthInfo, callback: (username?: string, password?: string) => void) => {
-    if (!authInfo.isProxy) return callback()
+    if (!authInfo.isProxy) {
+      callback()
+      return
+    }
     const p = getProxy()
     if (p?.username) callback(p.username, p.password ?? '')
     else callback()
   }
   ses.removeAllListeners('login')
-  ;(ses as unknown as { on(event: 'login', listener: typeof onLogin): void }).on('login', onLogin)
+  ;(ses as unknown as { on: (event: 'login', listener: typeof onLogin) => void }).on('login', onLogin)
   const proxy = getProxy()
   setSesProxy(ses, proxy?.type, proxy?.host, proxy?.port)
 

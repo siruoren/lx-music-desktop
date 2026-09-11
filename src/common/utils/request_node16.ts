@@ -26,11 +26,13 @@ const buildDispatcher = () => {
 setGlobalDispatcher(buildDispatcher())
 
 export const setProxy = (url?: string) => {
-  proxyAgent = url
-    ? (url.startsWith('socks5')
-      ? createSocksDispatcher(url)
-      : new ProxyAgent(url))
-    : null
+  if (!url) {
+    proxyAgent = null
+  } else if (url.startsWith('socks5')) {
+    proxyAgent = createSocksDispatcher(url)
+  } else {
+    proxyAgent = new ProxyAgent(url)
+  }
   setGlobalDispatcher(buildDispatcher())
 }
 export const setProxyByHost = (type: 'http' | 'socks5' = 'http', host?: string, port?: string, username?: string, password?: string, dnsResolve: 'local' | 'remote' = 'remote') => {

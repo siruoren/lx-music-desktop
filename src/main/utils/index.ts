@@ -302,7 +302,7 @@ export const setPowerSaveBlocker = (enabled: boolean) => {
 }
 
 
-type ProxyInfo = {
+interface ProxyInfo {
   host: string
   port: number
   type: 'http' | 'socks5'

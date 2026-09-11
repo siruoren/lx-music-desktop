@@ -239,7 +239,7 @@ export const listenerAppEvent = (startApp: () => void) => {
 
   const setProxy = () => {
     const proxy = getProxy()
-    if (proxy && proxy.host) {
+    if (proxy?.host) {
       setProxyByHost(
         proxy.type,
         proxy.host,
