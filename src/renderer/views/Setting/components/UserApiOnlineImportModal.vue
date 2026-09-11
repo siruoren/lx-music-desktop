@@ -12,17 +12,17 @@
       />
 
       <div :class="$style.dirBox">
-        <label :class="$style.dirLabel">{{ $t('user_api_import_dir_url') }}</label>
+        <label :class="$style.dirLabel">{{ $t('user_api_import_list_url') }}</label>
         <div :class="$style.dirRow">
           <base-input
             ref="dirInput"
             v-model="dirUrl"
             :class="$style.dirInput"
             type="url"
-            :placeholder="$t('user_api_import_dir_url_tip')"
+            :placeholder="$t('user_api_import_list_url_tip')"
             @submit="handleSaveDir"
           />
-          <base-btn :class="$style.btn" :disabled="disabled" @click="handleSaveDir">{{ $t('user_api_import_dir_save') }}</base-btn>
+          <base-btn :class="$style.btn" :disabled="disabled" @click="handleSaveDir">{{ $t('user_api_import_list_save') }}</base-btn>
         </div>
       </div>
 
@@ -61,7 +61,7 @@ export default {
     show(n) {
       if (n) {
         this.url = ''
-        this.dirUrl = appSetting['userApi.importDirUrl'] || ''
+        this.dirUrl = appSetting['userApi.importListUrl'] || ''
         this.disabled = false
         this.btnText = this.$t('user_api_import_online__input_confirm')
         this.defaultBtnText = this.$t('user_api_import_online__btn_default')
@@ -101,47 +101,25 @@ export default {
       this.$emit('import', script, url)
       this.handleClose()
     },
-    buildContentsApiUrl(raw) {
-      const url = (raw || '').trim()
-      if (!url) return ''
-      // 已是 contents API 地址
-      let m = url.match(/^https:\/\/api\.github\.com\/repos\/([^/]+)\/([^/]+)\/contents(\/.*)?$/)
-      if (m) {
-        const base = `https://api.github.com/repos/${m[1]}/${m[2]}/contents${m[3] || ''}`
-        return base + (base.includes('?') ? '&' : '?') + 'per_page=100'
-      }
-      // github.com 的 tree/blob 页面地址，转换为 contents API
-      m = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)(?:\/(tree|blob)\/([^/]+)(?:\/(.*))?)?$/)
-      if (m) {
-        const owner = m[1]
-        const repo = m[2]
-        const branch = m[4] || 'main'
-        const path = m[5] || ''
-        const contentsPath = path ? `/${path}` : ''
-        return `https://api.github.com/repos/${owner}/${repo}/contents${contentsPath}?ref=${branch}&per_page=100`
-      }
-      return ''
-    },
     handleSaveDir() {
       const raw = (this.dirUrl || '').trim()
       if (!raw) {
-        void dialog(this.$t('user_api_import_dir_empty'))
+        void dialog(this.$t('user_api_import_list_empty'))
         return
       }
-      updateSetting({ 'userApi.importDirUrl': raw })
+      updateSetting({ 'userApi.importListUrl': raw })
       // 保存后自动刷新重新导入
       this.handleDefaultImport(raw)
     },
     async handleDefaultImport(address) {
-      const addr = (address || '').trim() || (this.dirUrl || '').trim() || (appSetting['userApi.importDirUrl'] || '')
+      const addr = (address || '').trim() || (this.dirUrl || '').trim() || (appSetting['userApi.importListUrl'] || '')
       if (!addr) {
-        void dialog(this.$t('user_api_import_dir_empty_hint'))
+        void dialog(this.$t('user_api_import_list_empty_hint'))
         if (this.$refs.dirInput && this.$refs.dirInput.focus) this.$refs.dirInput.focus()
         return
       }
-      const listUrl = this.buildContentsApiUrl(addr)
-      if (!listUrl) {
-        void dialog(this.$t('user_api_import_dir_invalid'))
+      if (!/^https?:\/\//.test(addr)) {
+        void dialog(this.$t('user_api_import_list_invalid'))
         return
       }
 
@@ -149,9 +127,11 @@ export default {
       this.btnText = this.$t('user_api_import_online__input_confirm')
       this.defaultBtnText = this.$t('user_api_import_online__default_loading')
 
-      let listResp
+      // 下载列表文件（内容为每行一个 .js 地址）
+      let listText
       try {
-        listResp = await httpFetch(listUrl, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+        const resp = await httpFetch(addr, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+        listText = typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body)
       } catch (err) {
         void dialog(this.$t('user_api_import__failed', { message: err.message }))
         this.disabled = false
@@ -159,15 +139,8 @@ export default {
         return
       }
 
-      const entries = listResp.body
-      if (!Array.isArray(entries)) {
-        void dialog(this.$t('user_api_import__failed', { message: 'Unexpected response' }))
-        this.disabled = false
-        this.defaultBtnText = this.$t('user_api_import_online__btn_default')
-        return
-      }
-      const jsFiles = entries.filter(e => e && e.type === 'file' && typeof e.name === 'string' && e.name.endsWith('.js') && e.download_url)
-      if (!jsFiles.length) {
+      const urls = listText.split(/\r?\n/).map(l => l.trim()).filter(l => /^https?:\/\/.+\.js(\?.*)?$/i.test(l))
+      if (!urls.length) {
         void dialog(this.$t('user_api_default_import_empty'))
         this.disabled = false
         this.defaultBtnText = this.$t('user_api_import_online__btn_default')
@@ -175,15 +148,15 @@ export default {
       }
 
       const items = []
-      for (const file of jsFiles) {
+      for (const url of urls) {
         try {
-          const resp = await httpFetch(file.download_url, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
+          const resp = await httpFetch(url, { follow_max: 3, noProxy: true, timeout: 20_000 }).promise
           const script = resp.body
           if (typeof script != 'string' || !script.length) continue
           if (script.length > 9_000_000) continue
-          items.push({ script, url: file.download_url })
+          items.push({ script, url })
         } catch (err) {
-          console.log('Download default user api script failed:', file.name, err)
+          console.log('Download default user api script failed:', url, err)
         }
       }
 

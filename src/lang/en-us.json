@@ -756,10 +756,10 @@
   "user_api_default_import_empty": "The default source list is empty or failed to fetch",
   "user_api_default_import_success": "Successfully imported {success} custom source(s)",
   "user_api_default_import_failed": "Default import finished: {success} succeeded, {failed} failed",
-  "user_api_import_dir_url": "Default import directory URL",
-  "user_api_import_dir_url_tip": "e.g. https://github.com/owner/repo/tree/branch/dir",
-  "user_api_import_dir_save": "Save",
-  "user_api_import_dir_empty": "Please enter the default import directory URL",
-  "user_api_import_dir_empty_hint": "Please fill in and save the default import directory URL first",
-  "user_api_import_dir_invalid": "Unrecognized URL, please use a GitHub directory link"
+  "user_api_import_list_url": "Default import list file URL",
+  "user_api_import_list_url_tip": "e.g. https://example.com/list.txt (one .js URL per line)",
+  "user_api_import_list_save": "Save",
+  "user_api_import_list_empty": "Please enter the default import list file URL",
+  "user_api_import_list_empty_hint": "Please fill in and save the default import list file URL first",
+  "user_api_import_list_invalid": "Unrecognized URL, please enter a valid http(s) link"
 }
