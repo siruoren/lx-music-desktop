@@ -756,10 +756,10 @@
   "user_api_default_import_empty": "默认源列表为空或获取失败",
   "user_api_default_import_success": "成功导入 {success} 个自定义源",
   "user_api_default_import_failed": "默认导入完成：成功 {success} 个，失败 {failed} 个",
-  "user_api_import_dir_url": "默认导入目录地址",
-  "user_api_import_dir_url_tip": "例如 https://github.com/用户名/仓库/tree/分支/目录",
-  "user_api_import_dir_save": "保存",
-  "user_api_import_dir_empty": "请输入默认导入目录地址",
-  "user_api_import_dir_empty_hint": "请先填写并保存默认导入目录地址",
-  "user_api_import_dir_invalid": "无法识别该地址，请使用 GitHub 目录链接"
+  "user_api_import_list_url": "默认导入列表文件地址",
+  "user_api_import_list_url_tip": "例如 https://example.com/list.txt（内容为每行一个 .js 地址）",
+  "user_api_import_list_save": "保存",
+  "user_api_import_list_empty": "请输入默认导入列表文件地址",
+  "user_api_import_list_empty_hint": "请先填写并保存默认导入列表文件地址",
+  "user_api_import_list_invalid": "无法识别该地址，请输入有效的 http(s) 链接"
 }
