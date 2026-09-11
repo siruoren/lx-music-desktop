@@ -64,6 +64,8 @@ export default {
       updateSetting,
       setHost,
       setPort,
+      setUsername,
+      setPassword,
       setType,
       setDnsResolve,
       proxy,
