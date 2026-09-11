@@ -750,5 +750,16 @@
   "user_api_import_online__input_confirm": "匯入",
   "user_api_import_online__input_loading": "匯入中...",
   "user_api_import_online__input_tip": "請輸入 HTTP 連結",
-  "user_api_import_online__title": "從線上匯入自訂來源 API"
+  "user_api_import_online__title": "從線上匯入自訂來源 API",
+  "user_api_import_online__btn_default": "預設匯入",
+  "user_api_import_online__default_loading": "預設匯入中...",
+  "user_api_default_import_empty": "預設來源清單為空或取得失敗",
+  "user_api_default_import_success": "成功匯入 {success} 個自訂來源",
+  "user_api_default_import_failed": "預設匯入完成：成功 {success} 個，失敗 {failed} 個",
+  "user_api_import_dir_url": "預設匯入目錄地址",
+  "user_api_import_dir_url_tip": "例如 https://github.com/使用者/倉庫/tree/分支/目錄",
+  "user_api_import_dir_save": "儲存",
+  "user_api_import_dir_empty": "請輸入預設匯入目錄地址",
+  "user_api_import_dir_empty_hint": "請先填寫並儲存預設匯入目錄地址",
+  "user_api_import_dir_invalid": "無法辨識該地址，請使用 GitHub 目錄連結"
 }

@@ -750,5 +750,16 @@
   "user_api_import_online__input_confirm": "Import",
   "user_api_import_online__input_loading": "Importing...",
   "user_api_import_online__input_tip": "Please enter an HTTP link",
-  "user_api_import_online__title": "Import Music API from network."
+  "user_api_import_online__title": "Import Music API from network.",
+  "user_api_import_online__btn_default": "Default Import",
+  "user_api_import_online__default_loading": "Importing default...",
+  "user_api_default_import_empty": "The default source list is empty or failed to fetch",
+  "user_api_default_import_success": "Successfully imported {success} custom source(s)",
+  "user_api_default_import_failed": "Default import finished: {success} succeeded, {failed} failed",
+  "user_api_import_dir_url": "Default import directory URL",
+  "user_api_import_dir_url_tip": "e.g. https://github.com/owner/repo/tree/branch/dir",
+  "user_api_import_dir_save": "Save",
+  "user_api_import_dir_empty": "Please enter the default import directory URL",
+  "user_api_import_dir_empty_hint": "Please fill in and save the default import directory URL first",
+  "user_api_import_dir_invalid": "Unrecognized URL, please use a GitHub directory link"
 }
