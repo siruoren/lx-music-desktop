@@ -1,7 +1,6 @@
 {
   "id": "repo-source-plugins",
   "name": "repo-source-plugins",
-  "version": "2.0.0",
   "description": "远程自定义源批量导入与自动更新：填写一个远程列表文件地址，即可把文件里逐行列出的自定义源 js 批量导入到客户端「自定义源」列表（可在 设置 → 基本设置 → 自定义源 中勾选）；开启自动更新后每次启动都会更新已导入的源，并显示上次更新时间。另含可开关的搜索结果同源去重。",
   "main": "index.js",
   "platforms": [

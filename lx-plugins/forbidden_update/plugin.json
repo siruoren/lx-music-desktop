@@ -1,7 +1,6 @@
 {
   "id": "forbidden_update",
   "name": "forbidden_update",
-  "version": "1.0.0",
   "description": "安装并启用后禁用客户端的「检查更新」：不再向主进程发起更新检查，也不再接收更新事件（更新弹窗、自动下载、退出并安装均不会触发）。",
   "main": "index.js",
   "platforms": ["renderer"]

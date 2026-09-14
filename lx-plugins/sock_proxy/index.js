@@ -18,8 +18,17 @@
  * 保存在插件目录的 config.json，下次启动客户端自动生效。
  * 账户名与密码都留空时按 RFC 1928 使用「无认证」方式（AUTH_NONE）。
  *
- * 生效范围：所有经 `src/renderer/utils/request.js` 的请求 —— 各音乐源的搜索 /
- * 歌单 / 歌词 / 评论 / 榜单 / 热词 / 封面等。
+ * 生效范围（两层，缺一不可）：
+ *  1. **Node 请求层** —— 所有经 `src/renderer/utils/request.js` 的请求：各音乐源的搜索 /
+ *     歌单 / 歌词 / 评论 / 榜单 / 热词等。通过接管点 `window.lx.pluginNetAgent` 生效。
+ *  2. **Chromium 会话层** —— `<audio>` / `<img>` 等由 Chromium 直接发起的请求，
+ *     即**音乐播放**与封面加载。它们不经过 request.js，因此必须把代理设到 BrowserWindow
+ *     的会话上（`api.setSessionProxy`）：
+ *       · 代理不需要认证 → 直接用 Chromium 原生 `socks5://host:port`；
+ *       · 需要用户名/密码 → Chromium 会**静默忽略** SOCKS URL 里的凭据，因此改为起一个
+ *         只监听 127.0.0.1 的本地 HTTP 桥，由插件自己完成 RFC1929 认证后再转发。
+ *     只做第 1 层时会出现「测试通过、接口生效，但播放依然直连」的现象。
+ *
  * 未覆盖：下载任务另有一份独立的 agent 构造（`src/common/utils/download/util.ts`，
  * 运行在 download worker 中、且 worker 里拿不到 window.lx），详见 README「覆盖范围」。
  *
@@ -295,6 +304,136 @@ function createSocksAgentClass(BaseAgent, withTls) {
 const Socks5HttpAgent = createSocksAgentClass(http.Agent, false)
 const Socks5HttpsAgent = createSocksAgentClass(https.Agent, true)
 
+/** ============================ 本地 HTTP 桥 ============================ */
+
+/**
+ * 起一个只监听 127.0.0.1 的 HTTP 代理，把请求经 SOCKS5 隧道转发出去。
+ *
+ * 为什么需要它：Chromium 的 `session.setProxy()` 能直接用 `socks5://host:port`，
+ * 但**不支持带用户名/密码认证的 SOCKS5** —— URL 里的凭据会被静默忽略，连接因此
+ * 认证失败（参见 electron-session-proxy / electron-viasocks 等项目的说明）。
+ * 所以需要认证时，由本插件自己完成 RFC1929 认证，再向 Chromium 暴露一个普通的
+ * `http://127.0.0.1:<随机端口>` 代理。
+ *
+ * 处理 Chromium 走 HTTP 代理时的两种请求形态：
+ *   - `CONNECT host:port`（https 目标）→ 建隧道后原样双向转发；
+ *   - 绝对 URI 的普通请求（http 目标）→ 用一次性 agent 经隧道发出。
+ */
+function createBridge(socksOptsFactory) {
+  const sockets = new Set()
+  const track = socket => {
+    sockets.add(socket)
+    socket.once('close', () => sockets.delete(socket))
+    return socket
+  }
+
+  const tunnel = (host, port, cb) => {
+    socksConnect(Object.assign({}, socksOptsFactory(), {
+      targetHost: host,
+      targetPort: port,
+    }), (err, socket) => {
+      if (err) return cb(err)
+      cb(null, track(socket))
+    })
+  }
+
+  const onConnect = (req, clientSocket, head) => {
+    track(clientSocket)
+    const m = /^([^\s:]+):(\d+)$/.exec(String(req.url || '').trim())
+    if (!m) {
+      clientSocket.end('HTTP/1.1 400 Bad Request\r\n\r\n')
+      return
+    }
+    tunnel(m[1], Number(m[2]), (err, upstream) => {
+      if (err) {
+        try { clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n') } catch { /* noop */ }
+        return
+      }
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n')
+      if (head && head.length) upstream.write(head)
+      clientSocket.once('error', () => { try { upstream.destroy() } catch { /* noop */ } })
+      upstream.once('error', () => { try { clientSocket.destroy() } catch { /* noop */ } })
+      clientSocket.pipe(upstream)
+      upstream.pipe(clientSocket)
+    })
+  }
+
+  const onRequest = (req, res) => {
+    let target = null
+    try { target = new URL(req.url) } catch { target = null }
+    if (!target || !/^https?:$/.test(target.protocol)) {
+      res.writeHead(400).end('仅支持绝对 URI 的 http 代理请求')
+      return
+    }
+    if (target.protocol === 'https:') {
+      // https 目标 Chromium 一律走 CONNECT，这里兜底拒绝，避免 TLS 语义错误
+      res.writeHead(501).end('https 目标请使用 CONNECT')
+      return
+    }
+    const port = Number(target.port) || 80
+    tunnel(target.hostname, port, (err, socket) => {
+      if (err) {
+        res.writeHead(502).end(String((err && err.message) || err))
+        return
+      }
+      // 一次性 agent：让 http.request 直接复用已经建好的隧道 socket
+      const agent = new http.Agent({ keepAlive: false })
+      agent.createConnection = (opts, cb) => { cb(null, socket) }
+      const headers = Object.assign({}, req.headers)
+      delete headers['proxy-connection']
+      const upstream = http.request({
+        host: target.hostname,
+        port,
+        method: req.method,
+        path: `${target.pathname}${target.search}`,
+        headers,
+        agent,
+      }, upRes => {
+        res.writeHead(upRes.statusCode || 502, upRes.headers)
+        upRes.pipe(res)
+      })
+      upstream.once('close', () => { try { agent.destroy() } catch { /* noop */ } })
+      upstream.once('error', err2 => {
+        try { socket.destroy() } catch { /* noop */ }
+        if (!res.headersSent) res.writeHead(502)
+        res.end(String((err2 && err2.message) || err2))
+      })
+      req.pipe(upstream)
+    })
+  }
+
+  const server = http.createServer(onRequest)
+  server.on('connect', onConnect)
+  server.on('clientError', (err, socket) => { try { socket.destroy() } catch { /* noop */ } })
+
+  let closed = false
+  const close = () => {
+    if (closed) return
+    closed = true
+    for (const s of sockets) { try { s.destroy() } catch { /* noop */ } }
+    sockets.clear()
+    try { server.close() } catch { /* noop */ }
+  }
+  return { server, close }
+}
+
+/** 启动本地桥并返回 { port, close }；只监听回环地址，不对外暴露 */
+function startBridge(socksOptsFactory, callback) {
+  const bridge = createBridge(socksOptsFactory)
+  let settled = false
+  bridge.server.once('error', err => {
+    if (settled) return
+    settled = true
+    bridge.close()
+    callback(err)
+  })
+  bridge.server.listen(0, '127.0.0.1', () => {
+    if (settled) return
+    settled = true
+    callback(null, { port: bridge.server.address().port, close: bridge.close })
+  })
+}
+
 /** ============================ 插件生命周期 ============================ */
 
 /** 连接测试使用的目标（只建隧道，不发送业务数据） */
@@ -325,6 +464,8 @@ const DEFAULT_CONFIG = {
 /** setup 时写入，供 module 上的生命周期回调使用（它们拿不到 setup 的作用域） */
 let applyExternalConfig = null
 let runConnectionTest = null
+/** 卸载时撤销「会话代理」接管（关掉本地桥 + 通知宿主恢复原代理） */
+let teardownSessionProxy = null
 
 module.exports = {
   setup(api) {
@@ -333,6 +474,10 @@ module.exports = {
       api.logger.warn('未拿到 window.lx，插件无法接管代理 agent')
       return
     }
+    // 本插件同时跑在 renderer 与 main 两端：
+    //  - renderer：接管 Node 请求的 http.Agent（window.lx.pluginNetAgent）
+    //  - main：接管 Chromium 会话代理（api.setSessionProxy），让播放也走代理
+    const isRenderer = api.platform === 'renderer'
 
     // 配置来自插件自己的 config.json（<插件目录>/config.json），启动时自动载入
     const config = Object.assign({}, DEFAULT_CONFIG, api.getConfig())
@@ -342,6 +487,12 @@ module.exports = {
     let warnedConflict = false
     /** 最近一次运行状态，显示在设置面板上 */
     let status = ''
+    /** 需要认证时使用的本地 HTTP 桥（Chromium 不支持带凭据的 SOCKS URL） */
+    let bridge = null
+    /** 桥的代际号：配置快速变化时丢弃过期的启动结果 */
+    let bridgeGeneration = 0
+    /** 当前已声明给宿主的会话代理规则（空串表示未接管） */
+    let sessionProxyRules = ''
 
     const proxyPortOf = () => String(config.port || '') || String(config.defaultPort)
     const hasAuth = () => !!(config.username || config.password)
@@ -350,23 +501,88 @@ module.exports = {
     const describe = () => {
       if (!config.enable) return '未启用'
       if (!config.host) return '已启用，但还没填写代理地址'
-      return `已接管：SOCKS5 ${config.host}:${proxyPortOf()}（${config.remoteDns ? '远程' : '本地'} DNS，${hasAuth() ? '用户名/密码认证' : '无认证'}）`
+      const auth = hasAuth() ? '用户名/密码认证' : '无认证'
+      const dns = config.remoteDns ? '远程' : '本地'
+      // 会话层（音乐播放 / 封面）由 main 端负责：能拿到桥端口就报出来；
+      // 拿不到（renderer 端的设置面板）就说明「由主进程建立」，别误报成「未就绪」。
+      let playback
+      if (!hasAuth()) playback = 'Chromium 原生 SOCKS5'
+      else if (bridge) playback = `本地桥 127.0.0.1:${bridge.port}`
+      else playback = typeof api.setSessionProxy === 'function' ? '本地桥启动中…' : '本地桥（由主进程建立）'
+      return `已接管：SOCKS5 ${config.host}:${proxyPortOf()}（${dns} DNS，${auth}）；播放层 ${playback}`
     }
     status = describe()
+
+    /** 当前配置对应的 SOCKS5 握手参数（agent / 本地桥 / 连接测试共用） */
+    const socksOpts = () => ({
+      proxyHost: config.host,
+      proxyPort: Number(proxyPortOf()),
+      username: config.username,
+      password: config.password,
+      remoteDns: config.remoteDns,
+      timeout: config.timeout,
+    })
+
+    const stopBridge = () => {
+      bridgeGeneration++
+      if (!bridge) return
+      try { bridge.close() } catch { /* noop */ }
+      bridge = null
+    }
+
+    /**
+     * 应用「会话代理」：让 <audio>/<img> 等由 Chromium 直接发起的请求（音乐播放、封面）
+     * 也走 SOCKS5。
+     *
+     * 两条路径：
+     *  - 无认证：直接让 Chromium 用原生 `socks5://host:port`（性能最好）；
+     *  - 需要认证：Chromium 会静默忽略 SOCKS URL 里的凭据，因此改用一个只监听
+     *    127.0.0.1 的本地 HTTP 桥，由插件自己完成认证后再转发。
+     *
+     * 宿主未提供 api.setSessionProxy（老宿主）时静默跳过，插件仍能接管 Node 请求。
+     */
+    const applySessionProxy = () => {
+      if (typeof api.setSessionProxy !== 'function') return
+      if (!config.enable || !config.host) {
+        stopBridge()
+        sessionProxyRules = ''
+        api.setSessionProxy(null)
+        return
+      }
+      if (!hasAuth()) {
+        stopBridge()
+        sessionProxyRules = `socks5://${config.host}:${proxyPortOf()}`
+        api.setSessionProxy(sessionProxyRules)
+        return
+      }
+      // 需要认证：重启本地桥（配置可能已变），启动成功后把会话指向它
+      stopBridge()
+      sessionProxyRules = ''
+      api.setSessionProxy(null)
+      const generation = bridgeGeneration
+      startBridge(() => socksOpts(), (err, handle) => {
+        if (generation !== bridgeGeneration) {
+          // 期间配置又变了，丢弃这次结果
+          if (handle) { try { handle.close() } catch { /* noop */ } }
+          return
+        }
+        if (err) {
+          api.logger.error('启动本地桥失败，播放将不走代理：', err.message)
+          status = `本地桥启动失败：${err.message}`
+          return
+        }
+        bridge = handle
+        sessionProxyRules = `http://127.0.0.1:${handle.port}`
+        api.setSessionProxy(sessionProxyRules)
+        status = describe()
+      })
+    }
 
     const agentFor = (secure, proxyHost, proxyPort) => {
       const key = `${secure ? 'https' : 'http'}://${proxyHost}:${proxyPort}`
       let agent = agents.get(key)
       if (!agent) {
-        const socksOpts = {
-          proxyHost,
-          proxyPort,
-          username: config.username,
-          password: config.password,
-          remoteDns: config.remoteDns,
-          timeout: config.timeout,
-        }
-        agent = secure ? new Socks5HttpsAgent(socksOpts) : new Socks5HttpAgent(socksOpts)
+        agent = secure ? new Socks5HttpsAgent(socksOpts()) : new Socks5HttpAgent(socksOpts())
         agents.set(key, agent)
       }
       return agent
@@ -413,8 +629,11 @@ module.exports = {
       Object.assign(config, patch || {})
       if (keyOf(config) !== before) dropAgents()
       if (persist !== false) api.setConfig(readConfig())
-      // 开关打开时确保接管点已挂上；关闭时不摘掉，provider 自己会返回假值
-      if (config.enable && config.host && lx.pluginNetAgent !== provider) lx.pluginNetAgent = provider
+      // 开关打开时确保接管点已挂上；关闭时不摘掉，provider 自己会返回假值。
+      // pluginNetAgent 是 renderer 端的概念（main 端没有 window.lx），故仅在 renderer 设置。
+      if (isRenderer && config.enable && config.host && lx.pluginNetAgent !== provider) lx.pluginNetAgent = provider
+      // 会话代理（Chromium 层，播放/封面走的这一层）随配置同步更新；main 端才有该能力
+      applySessionProxy()
       status = describe()
       return readConfig()
     }
@@ -428,16 +647,10 @@ module.exports = {
       status = `正在测试 ${config.host}:${proxyPortOf()} …`
       const started = Date.now()
       await new Promise(resolve => {
-        socksConnect({
-          proxyHost: config.host,
-          proxyPort: Number(proxyPortOf()),
+        socksConnect(Object.assign(socksOpts(), {
           targetHost: TEST_TARGET.host,
           targetPort: TEST_TARGET.port,
-          username: config.username,
-          password: config.password,
-          remoteDns: config.remoteDns,
-          timeout: config.timeout,
-        }, (err, socket) => {
+        }), (err, socket) => {
           const cost = Date.now() - started
           if (err) {
             status = `测试失败（${cost}ms）：${err.message}`
@@ -453,9 +666,16 @@ module.exports = {
 
     applyExternalConfig = applyConfig
     runConnectionTest = testConnection
+    teardownSessionProxy = () => {
+      stopBridge()
+      sessionProxyRules = ''
+      if (typeof api.setSessionProxy === 'function') api.setSessionProxy(null)
+    }
 
     // 启用后立刻接管；未启用时保持 window.lx.pluginNetAgent 原状（默认 null）
-    if (config.enable && config.host) lx.pluginNetAgent = provider
+    if (isRenderer && config.enable && config.host) lx.pluginNetAgent = provider
+    // 会话代理：让播放、封面等由 Chromium 直接发起的请求也走 SOCKS5
+    applySessionProxy()
 
     // ---- 声明式设置面板（宿主统一渲染，配置保存到插件目录 config.json）----
     if (api.registerSettings) {
@@ -485,6 +705,9 @@ module.exports = {
       getConfig: readConfig,
       setConfig: (patch) => applyConfig(patch, true),
       isActive: () => lx.pluginNetAgent === provider,
+      /** 当前声明的 Chromium 会话代理规则；空串表示未接管（播放会直连） */
+      sessionProxyRules: () => sessionProxyRules,
+      bridgePort: () => (bridge ? bridge.port : null),
       status: () => status,
     }
 
@@ -506,16 +729,21 @@ module.exports = {
     return undefined
   },
 
-  /** 卸载/禁用：撤掉接管点并断开 keepAlive 连接（本插件不 patch 任何原函数，宿主无需回退） */
+  /** 卸载/禁用：撤掉接管点、关掉本地桥并断开 keepAlive 连接（本插件不 patch 任何原函数，宿主无需回退） */
   uninstall() {
     applyExternalConfig = null
     runConnectionTest = null
-    const lx = (typeof window !== 'undefined' && window.lx) || null
-    if (lx && lx.pluginNetAgent) lx.pluginNetAgent = null
-    console.log('[plugin:sock_proxy] 已卸载，网络请求恢复为客户端原生行为（HTTP 代理 / 直连）')
+    if (teardownSessionProxy) teardownSessionProxy()
+    teardownSessionProxy = null
+    const wx = (typeof window !== 'undefined' && window.lx) || null
+    const gx = (typeof global !== 'undefined' && global.lx) || null
+    for (const host of [wx, gx]) {
+      if (host && host.pluginNetAgent) host.pluginNetAgent = null
+    }
+    console.log('[plugin:sock_proxy] 已卸载，网络请求与播放恢复为客户端原生行为（HTTP 代理 / 直连）')
   },
 
   onUpdate(oldVersion) {
-    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新到 v2.0.0（配置仍保留在插件目录）`)
+    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新到 v2.1.0（配置仍保留在插件目录）`)
   },
 }

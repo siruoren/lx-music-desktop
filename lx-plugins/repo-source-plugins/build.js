@@ -22,8 +22,11 @@
  *   node lx-plugins/repo-source-plugins/build.js --out /tmp/out   # 指定输出目录（可与上面组合）
  *
  * 项目结构（本仓库：项目根即插件）：
- *   lx-plugins/<项目目录名>/plugin.json    # 清单（id / name / version 必填）
+ *   lx-plugins/<项目目录名>/plugin.json    # 清单（id / name 必填；version 可省略，自动用 app 版本）
  *   lx-plugins/<项目目录名>/index.js       # 入口代码（默认；可用 build.entry 指向源码目录）
+ *
+ * 插件版本自动与 app 保持一致：构建时读取仓库根 package.json 的 version 写入产物清单，
+ * plugin.json 里的 version（如果有）会被忽略，因此**不需要**在发版时逐个改插件的版本号。
  *
  * 如需把多文件源码打包成一个文件，可先用任意打包器（esbuild / rollup / webpack）产出
  * 单个 CommonJS 文件，再让 build.entry 指向它，本脚本只负责套上清单横幅。
@@ -35,10 +38,29 @@ const path = require('path')
 
 /** lx-plugins 目录（本脚本位于 lx-plugins/<项目>/ 下） */
 const PLUGINS_ROOT = path.resolve(__dirname, '..')
+/** 仓库根目录：app 版本（package.json 的 version）是所有插件版本的唯一来源 */
+const REPO_ROOT = path.resolve(PLUGINS_ROOT, '..')
 const BANNER_BEGIN = '/*!lxplugin'
 const BANNER_END = '*/'
 const VALID_ID = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/
 const VALID_VERSION = /^\d+(\.\d+)*([+-][0-9A-Za-z.-]+)?$/
+
+/**
+ * 读取 app 版本（仓库根 package.json 的 version）。
+ * 插件版本**自动跟随 app 版本**：plugin.json 里不再需要维护 version，
+ * 构建产物横幅里的 version 恒等于 app 版本，保证「插件版本 = app 版本」不会漂移。
+ * 找不到根 package.json 时返回 null（此时回退用 plugin.json 自带的 version）。
+ */
+function readAppVersion() {
+  const file = path.join(REPO_ROOT, 'package.json')
+  if (!fs.existsSync(file)) return null
+  try {
+    const version = JSON.parse(fs.readFileSync(file, 'utf-8')).version
+    return typeof version === 'string' && VALID_VERSION.test(version.trim()) ? version.trim() : null
+  } catch {
+    return null
+  }
+}
 
 function fail(message) {
   console.error(`[build-plugin] 构建失败：${message}`)
@@ -62,15 +84,23 @@ function formatSize(bytes) {
   return `${(bytes / 1024).toFixed(1)} KB`
 }
 
-/** 校验清单，返回规范化后的清单（main 固定为安装后的入口文件名） */
-function normalizeManifest(raw, projectName) {
+/** 校验清单，返回规范化后的清单（main 固定为安装后的入口文件名；version 用 app 版本覆盖） */
+function normalizeManifest(raw, projectName, appVersion) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail(`${projectName}/plugin.json 内容非法`)
   if (typeof raw.id !== 'string' || !VALID_ID.test(raw.id)) {
     fail(`${projectName}/plugin.json 的 id 非法（仅允许字母、数字、.、_、-）：${raw.id}`)
   }
   if (typeof raw.name !== 'string' || !raw.name) fail(`${projectName}/plugin.json 缺少 name`)
-  if (typeof raw.version !== 'string' || !VALID_VERSION.test(raw.version.trim())) {
+  // 版本自动跟随 app：优先根 package.json 的 version；仅当拿不到 app 版本时才用 plugin.json 的
+  if (raw.version != null && (typeof raw.version !== 'string' || !VALID_VERSION.test(raw.version.trim()))) {
     fail(`${projectName}/plugin.json 的 version 非法（应形如 1.0.0）：${raw.version}`)
+  }
+  const version = appVersion || (typeof raw.version === 'string' ? raw.version.trim() : '')
+  if (!version) {
+    fail(`${projectName}/plugin.json 缺少 version，且未能在仓库根 package.json 找到 app 版本`)
+  }
+  if (appVersion && typeof raw.version === 'string' && raw.version.trim() !== appVersion) {
+    log(`提示：${projectName} 的 plugin.json version（${raw.version.trim()}）已忽略，统一使用 app 版本 ${appVersion}`)
   }
   const main = raw.main || 'index.js'
   if (/[/\\]/.test(main) || !/\.(js|cjs|mjs)$/.test(main)) {
@@ -85,7 +115,7 @@ function normalizeManifest(raw, projectName) {
   const manifest = {
     id: raw.id,
     name: raw.name,
-    version: raw.version.trim(),
+    version,
   }
   if (raw.description) manifest.description = raw.description
   if (raw.author) manifest.author = raw.author
@@ -119,10 +149,10 @@ function resolveAllProjects() {
   return dirs
 }
 
-function buildProject(projectDir, outDir) {
+function buildProject(projectDir, outDir, appVersion) {
   const projectName = path.basename(projectDir)
   const raw = readJSON(path.join(projectDir, 'plugin.json'))
-  const manifest = normalizeManifest(raw, projectName)
+  const manifest = normalizeManifest(raw, projectName, appVersion)
 
   // 源码入口：build.entry 优先（可指向源码目录），否则用 main
   const entryRel = (raw.build && raw.build.entry) || manifest.main
@@ -165,9 +195,12 @@ function main() {
   if (all && nameArg) fail('--all 不能与项目名同时使用')
 
   const projects = all ? resolveAllProjects() : resolveProjects(nameArg)
+  const appVersion = readAppVersion()
+  if (appVersion) log(`app 版本：${appVersion}（所有插件的 version 自动跟随）`)
+  else log('警告：未找到仓库根 package.json，插件版本将回退用各 plugin.json 的 version')
   const files = projects.map(dir => {
     const outDir = outArg ? path.resolve(process.cwd(), outArg) : path.join(dir, 'dist')
-    return buildProject(dir, outDir)
+    return buildProject(dir, outDir, appVersion)
   })
   log(`全部完成，共 ${files.length} 个产物`)
 }

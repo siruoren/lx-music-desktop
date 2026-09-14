@@ -368,8 +368,13 @@ module.exports = {
             suffix: () => (state.lastUpdateAt ? `上次更新：${formatTime(state.lastUpdateAt)}` : '尚未更新过'),
             tip: '开启后每次启动客户端都会重新拉取列表并更新已导入的源。',
           },
-          { type: 'button', label: '立即导入 / 更新', action: 'update' },
-          { type: 'button', label: '移除本插件导入的全部源', action: 'removeAll' },
+          {
+            type: 'buttons',
+            buttons: [
+              { label: '立即导入 / 更新', action: 'update' },
+              { label: '移除本插件导入的全部源', action: 'removeAll' },
+            ],
+          },
           { type: 'divider' },
           { type: 'info', label: '状态', text: () => state.lastResult || '尚未执行' },
           {
@@ -459,6 +464,6 @@ module.exports = {
 
   /** 插件被更新后调用，oldVersion 为旧版本号 */
   onUpdate(oldVersion) {
-    console.log(`[plugin:repo-source-plugins] 已从 v${oldVersion} 更新到 v2.0.0（配置与账本保留在插件目录）`)
+    console.log(`[plugin:repo-source-plugins] 已从 v${oldVersion} 更新（配置与账本保留在插件目录）`)
   },
 }

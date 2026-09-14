@@ -26,12 +26,20 @@ import { PLUGIN_IPC } from './ipc'
 import type { PluginRuntimeState } from './ipc'
 import { getAppVersion } from './manifest'
 import { MAX_PLUGIN_FILE_SIZE } from './format'
+import { setPluginSessionProxy } from './sessionProxy'
 import type { PluginInfo, PluginOperationResult } from './types'
 
 let manager: PluginManager | null = null
 let pluginsDir = ''
 const mainHooks = new HookBus()
 const mainPatch = new PatchManager()
+
+/**
+ * 声明了 Chromium 会话代理的插件集合。
+ * 会话代理是全局的（同一时刻只允许一个代理生效，多插件同时声明时后者覆盖前者），
+ * 因此这里记录“谁声明过”，在插件卸载/禁用后兜底撤销，避免插件没自己清理而残留。
+ */
+const sessionProxyOwners = new Set<string>()
 
 // 主进程插件私有数据（pluginsDir/<id>/data.json）
 function readData(pluginId: string, key: string, def?: any): any {
@@ -76,6 +84,13 @@ const host: HostContext = {
   // 这里用闭包延迟取用（调用时必然已初始化）。
   getConfig: (pluginId: string) => manager!.getConfig(pluginId),
   setConfig: (pluginId: string, patch: Record<string, any>) => { manager!.setConfig(pluginId, patch) },
+  // 插件接管 Chromium 会话代理（如 SOCKS5）：让「播放」等由 Chromium 直接发起的
+  // 请求也走代理。仅 main 端提供，renderer 端没有这个能力。
+  setSessionProxy: (pluginId: string, rules: string | null) => {
+    if (rules) sessionProxyOwners.add(pluginId)
+    else sessionProxyOwners.delete(pluginId)
+    setPluginSessionProxy(rules)
+  },
 }
 
 /** 在 init() 内调用：初始化插件管理并加载主进程插件（必须先于窗口创建完成同步部分） */
@@ -103,6 +118,13 @@ export async function initPluginManager(): Promise<void> {
 
   // 加载已启用的主进程插件
   await manager.loadEnabledMainPlugins()
+
+  // 兜底：插件被卸载/禁用后若没自己撤销会话代理，这里替它撤销，避免代理残留
+  mainHooks.on('plugin:unloaded', (payload: { id: string }) => {
+    if (!payload || !sessionProxyOwners.has(payload.id)) return
+    sessionProxyOwners.delete(payload.id)
+    setPluginSessionProxy(null)
+  })
 }
 
 function registerIpc(): void {
