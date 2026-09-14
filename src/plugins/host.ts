@@ -8,7 +8,7 @@
  */
 import { type PatchManager } from './patch'
 import { type HookBus } from './hookBus'
-import type { PluginApi, PluginPlatform, RendererPluginApi } from './types'
+import type { PluginApi, PluginPlatform, PluginSettingsSpec, RendererPluginApi } from './types'
 
 export interface HostContext {
   platform: PluginPlatform
@@ -20,6 +20,12 @@ export interface HostContext {
   setData: (pluginId: string, key: string, value: any) => void
   registerMusicSource?: (id: string, name: string, module: any) => void
   unregisterMusicSource?: (id: string) => void
+  /** 读取插件配置（保存在插件目录 config.json） */
+  getConfig?: (pluginId: string) => Record<string, any>
+  /** 合并写入插件配置 */
+  setConfig?: (pluginId: string, patch: Record<string, any>) => void
+  /** 注册插件设置面板（renderer 端才有对应 UI） */
+  registerSettings?: (pluginId: string, spec: PluginSettingsSpec) => void
 }
 
 export interface PatchRecord {
@@ -92,6 +98,20 @@ export function createPluginApi(
   if (ctx.registerMusicSource) {
     api.registerMusicSource = ctx.registerMusicSource
     api.unregisterMusicSource = ctx.unregisterMusicSource
+  }
+
+  // 插件配置：与 api.getData/setData 分开存放，固定落在插件目录的 config.json，
+  // 用于「插件设置」面板；getData/setData 仍是插件自由使用的键值存储。
+  // 宿主没提供配置能力时退化为本实例内的内存对象，保证插件不因缺少能力而崩溃。
+  const localConfig: Record<string, any> = {}
+  api.getConfig = () => Object.assign({}, ctx.getConfig ? ctx.getConfig(pluginId) : localConfig)
+  api.setConfig = (patch: Record<string, any>) => {
+    if (ctx.setConfig) ctx.setConfig(pluginId, patch ?? {})
+    else Object.assign(localConfig, patch ?? {})
+  }
+  // 设置面板只在有 UI 的宿主（renderer）里可用；main 端不提供，插件据此判断能否被配置
+  if (ctx.registerSettings) {
+    api.registerSettings = (spec: PluginSettingsSpec) => { ctx.registerSettings!(pluginId, spec) }
   }
 
   // 供卸载时回退使用

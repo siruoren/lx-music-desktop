@@ -9,7 +9,8 @@ env:
   IS_CI: 'true'
 
 # 构建各平台安装包与插件，并由 Release 任务自动创建 GitHub Pre-release，
-# 把「各平台安装包 + 插件(.lxplugin)」一并上传。
+# 把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
+# 插件按「一个插件一个任务 / 一个 Artifact」的方式构建上传，可单独下载某一个插件。
 # 权限最小化：默认只读，仅 Release 任务提权到 contents: write（创建预发布需要）。
 permissions:
   contents: read
@@ -296,13 +297,14 @@ jobs:
           cd build
           md5sum *.deb *.rpm *.pacman *.AppImage
 
-  # 构建插件：把 lx-plugins/ 下的插件项目打成单个 .lxplugin 文件。
-  # 构建脚本零依赖（不需要 npm install），因此这一步很轻量。
-  Plugins:
-    name: Plugins
+  # 读取版本号 + 发现 lx-plugins/ 下的插件项目，供下面的矩阵构建使用。
+  # 构建脚本零依赖（不需要 npm install），因此插件相关任务都很轻量。
+  PluginMeta:
+    name: Plugin Meta
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      plugins: ${{ steps.plugins.outputs.plugins }}
     steps:
       - name: Check out git repository
         uses: actions/checkout@v6
@@ -319,21 +321,56 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "版本号：$VERSION"
 
-      - name: Build plugins
-        run: node lx-plugins/repo-source-plugins/build.js
+      - name: Discover plugin projects
+        id: plugins
+        run: |
+          LIST=$(node -e "
+            const fs = require('fs'), path = require('path');
+            const root = 'lx-plugins';
+            const names = fs.readdirSync(root, { withFileTypes: true })
+              .filter(e => e.isDirectory() && fs.existsSync(path.join(root, e.name, 'plugin.json')))
+              .map(e => e.name)
+              .sort();
+            if (!names.length) { console.error('lx-plugins 下没有发现任何插件项目'); process.exit(1); }
+            process.stdout.write(JSON.stringify(names));
+          ")
+          echo "plugins=$LIST" >> "$GITHUB_OUTPUT"
+          echo "发现插件项目：$LIST"
 
-      - name: Upload Artifact plugins
+  # 每个插件单独构建、单独上传为一个 Artifact（可只下载某一个插件）。
+  # 插件列表由 PluginMeta 动态发现，新增插件项目无需修改本文件。
+  Plugins:
+    name: Plugins / ${{ matrix.plugin }}
+    needs: PluginMeta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.PluginMeta.outputs.plugins) }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Build plugin ${{ matrix.plugin }}
+        run: node lx-plugins/repo-source-plugins/build.js ${{ matrix.plugin }}
+
+      - name: Upload Artifact ${{ matrix.plugin }}
         uses: actions/upload-artifact@v7
         with:
-          name: lx-plugins
-          path: lx-plugins/*/dist/*.lxplugin
+          name: lx-plugin-${{ matrix.plugin }}
+          path: lx-plugins/${{ matrix.plugin }}/dist/${{ matrix.plugin }}.lxplugin
           if-no-files-found: error
 
   # 等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
   # 并把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
   Release:
     name: Create Pre-release
-    needs: [Windows, Windows_7, Mac, Linux, Plugins]
+    needs: [Windows, Windows_7, Mac, Linux, PluginMeta, Plugins]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -353,11 +390,11 @@ jobs:
         with:
           # 必须显式指定 target_commitish：该参数默认指向「仓库默认分支」，
           # 而这里构建的是 beta 分支的提交，不指定会导致 tag 指向 master 的 HEAD。
-          tag_name: v${{ needs.Plugins.outputs.version }}-beta.${{ github.run_number }}
+          tag_name: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: Beta v${{ needs.Plugins.outputs.version }} (build ${{ github.run_number }})
+          name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
           body: |
-            ## LX Music Desktop Beta v${{ needs.Plugins.outputs.version }} (build ${{ github.run_number }})
+            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
 
             由 `beta` 分支推送自动构建的预发布版本，附件包含各平台安装包与插件（`.lxplugin`）。
 

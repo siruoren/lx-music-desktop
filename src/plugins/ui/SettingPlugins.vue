@@ -60,12 +60,19 @@
         <div v-if="p.description" :class="$style.desc2">{{ p.description }}</div>
         <div v-if="p.error" :class="$style.err">{{ p.error }}</div>
         <div :class="$style.actions">
+          <button
+            v-if="hasSettings(p.id)" :class="[$style.btnSm, $style.btnSettings]" :disabled="busy"
+            @click="toggleSettings(p.id)"
+          >
+            {{ openSettingsId === p.id ? '收起设置' : '设置' }}
+          </button>
           <button :class="$style.btnSm" :disabled="busy" @click="pickUpdateFile(p)">上传新版本</button>
           <button :class="$style.btnSm" :disabled="busy" @click="updateFromDir(p)">目录更新（开发）</button>
           <button :class="$style.btnSm" :disabled="busy" @click="openDir(p)">打开目录</button>
           <button :class="$style.btnSmDanger" :disabled="busy" @click="uninstallPlugin(p)">卸载</button>
         </div>
         <div :class="$style.path" :title="p.dir">{{ p.dir }}</div>
+        <PluginSettingsPanel v-if="openSettingsId === p.id" :key="p.id" :plugin-id="p.id" />
       </li>
     </ul>
   </div>
@@ -73,9 +80,13 @@
 
 <script>
 import { ref, onMounted, onBeforeUnmount } from '@common/utils/vueTools'
+import PluginSettingsPanel from './PluginSettingsPanel.vue'
 
 export default {
   name: 'SettingPlugins',
+  components: {
+    PluginSettingsPanel,
+  },
   setup() {
     const list = ref([])
     const loading = ref(false)
@@ -83,6 +94,8 @@ export default {
     const message = ref('')
     const messageType = ref('ok')
     const dragging = ref(false)
+    // 当前展开了设置面板的插件 id（同一时刻只展开一个）
+    const openSettingsId = ref('')
     // 待确认的上传：{ mode: 'install' | 'update', id, fileName, content, manifest }
     const pending = ref(null)
     const installInput = ref(null)
@@ -125,11 +138,30 @@ export default {
           return
         }
         list.value = await mgr.list()
+        // 插件被禁用/卸载后不再注册设置面板，此时自动收起面板
+        if (openSettingsId.value && !hasSettings(openSettingsId.value)) openSettingsId.value = ''
       } catch (err) {
         showMsg('获取插件列表失败：' + (err.message || err), 'error')
       } finally {
         loading.value = false
       }
+    }
+
+    /** 该插件是否提供了设置面板（未注册则不显示「设置」按钮） */
+    const hasSettings = id => {
+      const host = getHost()
+      const settings = host && host.settings
+      return !!(settings && settings.has && settings.has(id))
+    }
+
+    /** 展开/收起某插件的设置面板；展开前先刷新一次列表，保证按钮状态是最新的 */
+    const toggleSettings = async id => {
+      if (openSettingsId.value === id) {
+        openSettingsId.value = ''
+        return
+      }
+      await refresh()
+      openSettingsId.value = id
     }
 
     /** 安装/更新后同步 renderer 端插件的加载状态 */
@@ -216,8 +248,9 @@ export default {
         }
         pending.value = null
         showMsg(res.message || (task.mode === 'install' ? '安装成功' : '更新成功'))
-        await refresh()
+        // 先加载插件，再刷新列表 —— 插件加载时才会注册设置面板，顺序反了「设置」按钮不出现
         if (res.id) await syncLoaded(res.id, true)
+        await refresh()
       } catch (err) {
         showMsg('操作失败：' + (err.message || err), 'error')
       } finally {
@@ -236,8 +269,9 @@ export default {
           return
         }
         showMsg(res.message || '安装成功')
-        await refresh()
+        // 先加载插件，再刷新列表 —— 插件加载时才会注册设置面板，顺序反了「设置」按钮不出现
         if (res.id) await syncLoaded(res.id, true)
+        await refresh()
       } catch (err) {
         showMsg('安装失败：' + (err.message || err), 'error')
       } finally {
@@ -256,8 +290,9 @@ export default {
           return
         }
         showMsg(res.message || '更新成功')
-        await refresh()
+        // 先加载插件，再刷新列表 —— 插件加载时才会注册设置面板，顺序反了「设置」按钮不出现
         if (res.id) await syncLoaded(res.id, true)
+        await refresh()
       } catch (err) {
         showMsg('更新失败：' + (err.message || err), 'error')
       } finally {
@@ -350,7 +385,10 @@ export default {
       dragging,
       installInput,
       updateInput,
+      openSettingsId,
       refresh,
+      hasSettings,
+      toggleSettings,
       pickInstallFile,
       pickUpdateFile,
       handleInstallFilePick,
@@ -405,6 +443,7 @@ export default {
 .err { font-size: 12px; color: #c0392b; margin-top: 6px; }
 .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .btnSm { background: transparent; border: 1px solid var(--border-color, #ccc); color: var(--text-color, #333); padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+.btnSettings { border-color: var(--primary-color, #4a8bf5); color: var(--primary-color, #4a8bf5); }
 .btnSmDanger { background: transparent; border: 1px solid #e0a0a0; color: #c0392b; padding: 4px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
 .btnSm:disabled, .btnSmDanger:disabled { opacity: .5; cursor: not-allowed; }
 .path { font-size: 11px; color: var(--text-color-3, #aaa); margin-top: 8px; word-break: break-all; }

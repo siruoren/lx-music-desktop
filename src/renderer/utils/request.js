@@ -27,11 +27,13 @@ const getRequestAgent = url => {
     }
   }
   // === Plugin Manager === 插件可接管代理 agent（如 SOCKS5）。
-  // 约定：入参 (url, { host, port })，返回 agent 即接管；返回 undefined 表示不接管，走下面的原逻辑。
+  // 约定：入参 (url, { host, port } | undefined)，返回 agent 即接管；返回 undefined/假值表示不接管，走下面的原逻辑。
+  // 注意：即使 app 自身没有开启「网络代理」（options 为 undefined）也会询问插件——
+  // 插件是否接管只取决于它自己的配置，与 app 的 HTTP 代理设置相互独立。
   const pluginNetAgent = typeof window !== 'undefined' && window.lx ? window.lx.pluginNetAgent : null
-  if (options && typeof pluginNetAgent === 'function') {
-    const agent = pluginNetAgent(url, options.proxy)
-    if (agent !== undefined) return agent
+  if (typeof pluginNetAgent === 'function') {
+    const agent = pluginNetAgent(url, options ? options.proxy : undefined)
+    if (agent) return agent
   }
   return options ? (httpsRxp.test(url) ? httpsOverHttp : httpOverHttp)(options) : undefined
 }
