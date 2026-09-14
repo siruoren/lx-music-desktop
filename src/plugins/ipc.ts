@@ -37,6 +37,16 @@ export const PLUGIN_IPC = {
   disable: 'plugin:disable',
   /** 打开插件目录（参数 {id}） */
   openDir: 'plugin:openDir',
+
+  /**
+   * renderer 宿主上报某插件的实际加载结果（参数 {id, state, error?}）。
+   * 主进程只加载 main 端插件，无从得知 renderer 端是否加载成功，
+   * 因此由 renderer 侧回传，列表才能显示真实状态（已启用 / 出错）。
+   */
+  reportState: 'plugin:reportState',
 } as const
+
+/** renderer 宿主上报的加载状态 */
+export type PluginRuntimeState = 'loaded' | 'unloaded' | 'error'
 
 export type PluginIpcName = (typeof PLUGIN_IPC)[keyof typeof PLUGIN_IPC]

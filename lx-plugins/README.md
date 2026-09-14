@@ -11,13 +11,16 @@ lx-music-desktop 的**统一插件项目目录**。所有自研插件都以「�
 ```
 lx-plugins/
 ├── README.md                     本文件
-└── repo-source-plugins/          一个插件项目（目录名 = 插件 id / 名称）
+├── repo-source-plugins/          音乐源增强（跨源去重 + 统计 + 注册自定义音乐源）
+├── sock_proxy/                   让「设置 → 网络代理」支持 SOCKS5
+├── forbidden_update/             禁用客户端「检查更新」
+└── <任意插件项目>/               一个子目录 = 一个插件项目（目录名 = 插件 id / 名称）
     ├── plugin.json               插件清单
     ├── index.js                  插件入口（CommonJS）
     ├── build.js                  零依赖构建脚本
     ├── README.md                 该插件的说明
     └── dist/                     构建产物（.gitignore 已忽略 dist）
-        └── repo-source-plugins.lxplugin
+        └── <项目名>.lxplugin
 ```
 
 ## 构建
@@ -25,13 +28,15 @@ lx-plugins/
 构建脚本零依赖，**不需要 `npm install`**：
 
 ```bash
-npm run build:plugin                                  # 构建当前项目
-node lx-plugins/repo-source-plugins/build.js          # 等价写法
-node lx-plugins/repo-source-plugins/build.js <项目名>  # 构建 lx-plugins 下的指定项目
-node lx-plugins/repo-source-plugins/build.js <项目名> --out /tmp/out  # 指定输出目录
+npm run build:plugin                                   # 构建 lx-plugins 下全部插件项目
+node lx-plugins/repo-source-plugins/build.js           # 只构建脚本所在的项目
+node lx-plugins/repo-source-plugins/build.js <项目名>   # 构建指定项目
+node lx-plugins/repo-source-plugins/build.js --all      # 构建全部项目
+node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输出目录
 ```
 
 产物文件名取自**插件项目目录名**，即 `lx-plugins/<项目目录名>/dist/<项目目录名>.lxplugin`。
+安装进客户端后，插件目录为 `userData/plugins/<id>/`（`plugin.json` + 入口文件）。
 
 ## 新增一个插件项目
 
@@ -77,21 +82,37 @@ node lx-plugins/repo-source-plugins/build.js <项目名> --out /tmp/out  # 指�
 
 ## 与上游代码的合并关系
 
-插件系统对上游源码只有 **4 处**带 `Plugin Manager` 标记的极小改动：
+插件系统对上游源码只有 **5 处**带 `Plugin Manager` 标记的极小改动：
 
 | 文件 | 改动 |
 | --- | --- |
 | `src/main/index.ts` | 初始化插件管理（加载主进程插件、注册管理 IPC） |
 | `src/renderer/main.ts` | 初始化渲染端插件宿主 |
 | `src/renderer/utils/musicSdk/index.js` | 调用时合并插件注册的音乐源 |
+| `src/renderer/utils/request.js` | `getRequestAgent` 中查询 `window.lx.pluginNetAgent`，允许插件接管代理 agent |
 | `src/renderer/views/Setting/index.vue` | 新增「插件管理」标签页 |
 
 其余全部是本目录与 `src/plugins/` 下的**新增文件**，合入上游更新时不会冲突：
-同步上游后只需保证上述 4 处标记仍在即可。这 4 处使用**完全一致的标记文本**，一条命令即可全部定位：
+同步上游后只需保证上述 5 处标记仍在即可。这 5 处使用**完全一致的标记文本**，一条命令即可全部定位：
 
 ```bash
 grep -rnF '=== Plugin Manager ===' src
 ```
+
+## 插件状态说明
+
+插件管理页的状态列直接来自主进程的 `PluginManager.list()`：
+
+| 状态 | 含义 |
+| --- | --- |
+| 已启用 | 启用开关为开，且无加载失败记录 |
+| 已禁用 | 启用开关为关（插件安装后默认启用） |
+| 出错 | 已启用且版本兼容，但加载/执行失败，右侧会显示具体原因 |
+| 不兼容 | 已启用，但 `engines.app` 与当前客户端版本不符 |
+
+> 主进程只加载 `main` 端插件，**判断不了 renderer 端插件是否真的加载成功**，
+> 因此 renderer 宿主加载后会通过 `plugin:reportState` 把结果回传给主进程（成功 / 失败+原因 / 已卸载）。
+> 若不做这个回传，renderer 端插件就会恒显示为「已禁用」。
 
 ## CI 与发布
 
