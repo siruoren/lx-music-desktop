@@ -159,7 +159,7 @@ export default {
       // 编辑中的字段优先用草稿渲染，避免被「轮询重渲染」或「宿主推送」回滚
       if (field.key in draft.value) return draft.value[field.key]
       const value = values.value[field.key]
-      return value == null ? '' : value
+      return value ?? ''
     }
 
     const inputType = field => {
@@ -221,8 +221,11 @@ export default {
       const patch = {}
       patch[field.key] = value
       writeConfig(patch)
-      const next = Object.assign({}, draft.value)
-      delete next[field.key]
+      // 不能用 delete 删动态键（违反 no-dynamic-delete），改为重建一份不含该键的草稿
+      const next = {}
+      for (const key of Object.keys(draft.value)) {
+        if (key !== field.key) next[key] = draft.value[key]
+      }
       draft.value = next
     }
 
