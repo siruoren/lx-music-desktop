@@ -1,8 +1,9 @@
 name: Run build test
 
 on:
-  branches:
-     - features
+  push:
+    branches:
+      - features
 
 jobs:
   test:
