@@ -12,8 +12,10 @@
  *      config.json（<插件目录>/config.json），与 app 自身设置完全隔离。
  *
  *   实现要点：客户端「自定义源」的导入接口每次都会生成新的源 id，无法原地覆盖，
- *   所以更新某个源时是「先移除旧 id、再导入新内容」；若该源原本处于被选中状态，
- *   会自动把选中项切到新 id，避免用户的勾选被清掉。
+ *   所以每次导入都是「先删除本地已存在的源、再导入新内容」——删除范围包括本插件
+ *   之前导入的源（账本记录）以及用户手动导入的同名源（按脚本头 @name 匹配），
+ *   避免重复导入越积越多；若该源原本处于被选中状态，会自动把选中项切到新 id，
+ *   避免用户的勾选被清掉。
  *
  * 二、搜索结果增强（可开关）
  *   包装 musicSdk.searchMusic，对同一个音乐源内部的重复条目做稳定去重。
@@ -243,7 +245,6 @@ module.exports = {
         const lines = []
         const next = []
         let imported = 0
-        let unchanged = 0
         let failed = 0
 
         for (const url of urls) {
@@ -258,22 +259,20 @@ module.exports = {
             const name = readScriptInfo(script, 'name') || prev?.name || url
             const version = readScriptInfo(script, 'version')
 
-            // 内容没变且源还在 → 不动它（避免每次启动都重建，导致选中项丢失）
-            const stillThere = prev && prev.apiId && (userApi.list() || []).some(item => item.id === prev.apiId)
-            if (prev && prev.hash === hash && stillThere) {
-              unchanged++
-              next.push({ ...prev, name, version })
-              lines.push(`未变化：${name}`)
-              continue
+            // 先删除本地已存在的源再导入：除了本插件之前导入的（账本里的 apiId），
+            // 也包括用户手动导入的同名源（本地列表条目的 name 来自脚本头 @name，按名字匹配）。
+            // 客户端导入接口每次都生成新 id，无法原地覆盖，只有「先删后加」才不会越积越多。
+            const idsToRemove = new Set()
+            if (prev && prev.apiId) idsToRemove.add(prev.apiId)
+            for (const local of (userApi.list() || [])) {
+              if (local && local.id && local.name === name) idsToRemove.add(local.id)
             }
-
-            // 客户端导入接口每次都生成新 id，无法原地覆盖 → 先移除旧的
-            const wasActive = !!(prev && prev.apiId && userApi.getActiveId() === prev.apiId)
-            if (prev && prev.apiId) {
+            const wasActive = idsToRemove.has(userApi.getActiveId())
+            if (idsToRemove.size) {
               try {
-                await userApi.remove([prev.apiId])
+                await userApi.remove([...idsToRemove])
               } catch (err) {
-                api.logger.warn(`移除旧源失败（${prev.name || url}）：`, err)
+                api.logger.warn(`移除本地已有源失败（${name}）：`, err)
               }
             }
 
@@ -290,7 +289,7 @@ module.exports = {
             }
             imported++
             next.push({ url, apiId, name, version, hash, updatedAt: now })
-            lines.push(`${wasActive ? '已更新（并保持选中）' : '已更新'}：${name}${version ? ` v${version}` : ''}`)
+            lines.push(`已更新（先删除本地已有源）：${name}${version ? ` v${version}` : ''}`)
           } catch (err) {
             failed++
             if (prev) next.push(prev)
@@ -306,9 +305,9 @@ module.exports = {
         state.sources = next
         state.lastUpdateAt = now
         state.lastResult =
-          `${reason}完成（${formatTime(now)}）：更新 ${imported} 个、未变化 ${unchanged} 个、失败 ${failed} 个\n` +
+          `${reason}完成（${formatTime(now)}）：更新 ${imported} 个、失败 ${failed} 个\n` +
           lines.join('\n')
-        api.logger.info(`远程自定义源更新完成：更新 ${imported}、未变化 ${unchanged}、失败 ${failed}`)
+        api.logger.info(`远程自定义源更新完成：更新 ${imported}、失败 ${failed}`)
       } catch (err) {
         state.lastResult = `更新失败（${formatTime(Date.now())}）：${err.message}`
         api.logger.error('更新远程自定义源失败：', err)
