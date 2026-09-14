@@ -433,9 +433,51 @@ jobs:
             下载需要的 `.lxplugin` 文件后，在客户端「设置 → 插件管理」中点击「安装插件」上传即可安装/更新。
           # 安装包：每个安装包 Artifact 目录下的文件各自作为独立附件；
           # 插件：每个插件 Artifact 目录下的 .lxplugin 各自作为独立附件。
+          #
+          # ⚠️ 这两条 glob 必须**互不重叠**，不要把 dist/ 下的文件再交给更宽的
+          # 模式（例如再补一条 dist/**）—— action 的 paths() 只是把所有模式的
+          # 匹配结果 concat 起来、**不做去重**，于是每个文件会被排进上传队列两次，
+          # 再由 Promise.all 并发上传同名文件，触发 422 already_exists /
+          # 资产元数据 404 的竞态：轻则附件静默缺失，重则整步失败报
+          # 「Not Found - .../releases/assets#update-a-release-asset」。
           files: |
             dist/lx-music-desktop-*/*
             dist/lx-plugin-*/*.lxplugin
+          # 串行上传（按上面 files 的顺序）。默认是 Promise.all 并发上传，
+          # 附件多时容易撞上 GitHub 一侧「资产元数据延迟可见」的瞬时 404。
+          preserve_order: true
           generate_release_notes: true
           draft: false
           prerelease: true
+
+      # 上传完必须核对一次：附件数/文件名要和 dist/ 里准备上传的文件完全一致。
+      # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
+      - name: Verify release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          # 用 sed 取 basename：BSD/GNU 通用（find -printf 只有 GNU 有）
+          find dist -type f | sed 's#.*/##' | sort > expected.txt
+          echo "准备上传的附件（$(wc -l < expected.txt | tr -d ' ') 个）："
+          cat expected.txt
+
+          ok=0
+          for i in $(seq 1 5); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | sort > actual.txt
+            if diff -q expected.txt actual.txt > /dev/null; then
+              ok=1
+              break
+            fi
+            echo "第 $i 次核对未通过（release 上 $(wc -l < actual.txt | tr -d ' ') 个附件），3 秒后重试…"
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::发布的附件与预期不一致（下面 - 表示缺失、+ 表示多余）："
+            diff -u expected.txt actual.txt || true
+            exit 1
+          fi
+          echo "✅ 附件核对通过：$(wc -l < actual.txt | tr -d ' ') 个附件齐全，且每个插件各自一个独立附件"
