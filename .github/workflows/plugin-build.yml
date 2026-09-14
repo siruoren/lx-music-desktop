@@ -1,0 +1,44 @@
+name: Build Plugins
+
+# 只负责插件构建：把 lx-plugins/ 下的插件项目构建成单个 .lxplugin 文件并上传为产物。
+# 构建脚本零依赖（不需要 npm install），因此这个工作流非常轻量。
+on:
+  push:
+    paths:
+      - 'lx-plugins/**'
+      - 'src/plugins/**'
+      - '.github/workflows/plugin-build.yml'
+  pull_request:
+    paths:
+      - 'lx-plugins/**'
+      - 'src/plugins/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Build plugins
+        run: node lx-plugins/repo-source-plugins/build.js
+
+      - name: List artifacts
+        run: ls -lh lx-plugins/*/dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-plugins
+          path: lx-plugins/*/dist/*.lxplugin
+          if-no-files-found: error
+          retention-days: 30

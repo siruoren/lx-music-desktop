@@ -77,6 +77,12 @@ void getSetting().then(setting => {
   initPlugins(app)
   mountComponents(app)
   app.mount('#root')
+
+  // === Plugin Manager === 初始化用户插件（加载已启用的 renderer 端插件）；
+  // 异步执行且失败不影响主程序启动
+  void import('../plugins/renderer')
+    .then(async m => { await m.initUserPlugins(app) })
+    .catch(err => { console.error('[plugin] 初始化失败（不影响主程序）：', err) })
 })
 
 // bubbleCursor()

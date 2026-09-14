@@ -1,9 +1,9 @@
 name: Run build test
 
 on:
-  pull_request:
+  push:
     branches:
-      - dev
+      - features
 
 jobs:
   test:

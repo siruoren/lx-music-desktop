@@ -8,6 +8,12 @@ on:
 env:
   IS_CI: 'true'
 
+# 构建各平台安装包与插件，并由 Release 任务自动创建 GitHub Pre-release，
+# 把「各平台安装包 + 插件(.lxplugin)」一并上传。
+# 权限最小化：默认只读，仅 Release 任务提权到 contents: write（创建预发布需要）。
+permissions:
+  contents: read
+
 jobs:
   # CheckCode:
   #   name: Lint Code
@@ -289,3 +295,81 @@ jobs:
         run: |
           cd build
           md5sum *.deb *.rpm *.pacman *.AppImage
+
+  # 构建插件：把 lx-plugins/ 下的插件项目打成单个 .lxplugin 文件。
+  # 构建脚本零依赖（不需要 npm install），因此这一步很轻量。
+  Plugins:
+    name: Plugins
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版本号：$VERSION"
+
+      - name: Build plugins
+        run: node lx-plugins/repo-source-plugins/build.js
+
+      - name: Upload Artifact plugins
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-plugins
+          path: lx-plugins/*/dist/*.lxplugin
+          if-no-files-found: error
+
+  # 等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
+  # 并把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
+  Release:
+    name: Create Pre-release
+    needs: [Windows, Windows_7, Mac, Linux, Plugins]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: '*'
+          merge-multiple: true
+
+      - name: List release files
+        run: ls -lhR dist
+
+      - name: Create Pre-release
+        uses: softprops/action-gh-release@v3
+        with:
+          # 必须显式指定 target_commitish：该参数默认指向「仓库默认分支」，
+          # 而这里构建的是 beta 分支的提交，不指定会导致 tag 指向 master 的 HEAD。
+          tag_name: v${{ needs.Plugins.outputs.version }}-beta.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Beta v${{ needs.Plugins.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            ## LX Music Desktop Beta v${{ needs.Plugins.outputs.version }} (build ${{ github.run_number }})
+
+            由 `beta` 分支推送自动构建的预发布版本，附件包含各平台安装包与插件（`.lxplugin`）。
+
+            - 提交：`${{ github.sha }}`
+            - 工作流运行：#${{ github.run_number }}
+
+            ### 插件安装
+
+            下载 `.lxplugin` 文件后，在客户端「设置 → 插件管理」中点击「安装插件」上传即可安装/更新。
+          files: |
+            dist/*
+            dist/**
+          generate_release_notes: true
+          draft: false
+          prerelease: true
