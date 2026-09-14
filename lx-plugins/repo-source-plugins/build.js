@@ -18,7 +18,8 @@
  * 用法：
  *   node lx-plugins/repo-source-plugins/build.js            # 构建脚本所在的项目
  *   node lx-plugins/repo-source-plugins/build.js <项目名>    # 构建 lx-plugins 下的指定项目
- *   node lx-plugins/repo-source-plugins/build.js <项目名> --out /tmp/out
+ *   node lx-plugins/repo-source-plugins/build.js --all      # 构建 lx-plugins 下的全部插件项目
+ *   node lx-plugins/repo-source-plugins/build.js --out /tmp/out   # 指定输出目录（可与上面组合）
  *
  * 项目结构（本仓库：项目根即插件）：
  *   lx-plugins/<项目目录名>/plugin.json    # 清单（id / name / version 必填）
@@ -108,6 +109,16 @@ function resolveProjects(arg) {
   return [dir]
 }
 
+/** lx-plugins 下的全部插件项目（按目录名排序） */
+function resolveAllProjects() {
+  const dirs = fs.readdirSync(PLUGINS_ROOT, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && fs.existsSync(path.join(PLUGINS_ROOT, entry.name, 'plugin.json')))
+    .map(entry => path.join(PLUGINS_ROOT, entry.name))
+    .sort()
+  if (!dirs.length) fail('lx-plugins 下没有找到任何插件项目（需含 plugin.json）')
+  return dirs
+}
+
 function buildProject(projectDir, outDir) {
   const projectName = path.basename(projectDir)
   const raw = readJSON(path.join(projectDir, 'plugin.json'))
@@ -145,12 +156,15 @@ function main() {
   const args = process.argv.slice(2)
   let outArg = null
   let nameArg = null
+  let all = false
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--out') outArg = args[++i]
+    else if (args[i] === '--all') all = true
     else if (!nameArg) nameArg = args[i]
   }
+  if (all && nameArg) fail('--all 不能与项目名同时使用')
 
-  const projects = resolveProjects(nameArg)
+  const projects = all ? resolveAllProjects() : resolveProjects(nameArg)
   const files = projects.map(dir => {
     const outDir = outArg ? path.resolve(process.cwd(), outArg) : path.join(dir, 'dist')
     return buildProject(dir, outDir)

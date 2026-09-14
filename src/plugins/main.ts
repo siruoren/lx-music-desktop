@@ -23,6 +23,7 @@ import type { HostContext } from './host'
 import { mainHandle } from '@common/mainIpc'
 import { openDirInExplorer } from '@common/utils/electron'
 import { PLUGIN_IPC } from './ipc'
+import type { PluginRuntimeState } from './ipc'
 import { getAppVersion } from './manifest'
 import { MAX_PLUGIN_FILE_SIZE } from './format'
 import type { PluginInfo, PluginOperationResult } from './types'
@@ -156,6 +157,10 @@ function registerIpc(): void {
     openDirInExplorer(dir)
     const result: PluginOperationResult = { success: true }
     return result
+  })
+  // renderer 宿主上报加载结果，使列表能如实显示 renderer 端插件的状态
+  mainHandle(PLUGIN_IPC.reportState, async({ params }: { params: { id: string, state: PluginRuntimeState, error?: string } }) => {
+    m().reportRuntimeState(params.id, params.state, params.error)
   })
 }
 

@@ -46,6 +46,13 @@ export class PluginManager {
   private readonly enabled: EnabledState
   private readonly host: HostContext
   private readonly loaded = new Map<string, LoadedPlugin>()
+  /**
+   * 各插件“最近一次实际加载结果”，用于让列表状态反映真实情况。
+   *  - main 端插件：由本类在 loadMain/unloadMain 中写入；
+   *  - renderer 端插件：由 renderer 宿主经 reportState 回传。
+   * 主进程的 loaded 只包含 main 端插件，因此不能用它判断 renderer 端插件是否已启用。
+   */
+  private readonly runtimeState = new Map<string, { loaded: boolean, error?: string }>()
 
   constructor(pluginsDir: string, host: HostContext) {
     this.pluginsDir = pluginsDir
@@ -55,6 +62,18 @@ export class PluginManager {
   }
 
   // ===================== 扫描 / 列表 =====================
+  /**
+   * 列出已安装插件。
+   *
+   * status 语义（UI 直接展示，所以必须反映真实情况）：
+   *  - disabled：启用开关为关；
+   *  - incompatible：已启用但与当前客户端版本不兼容；
+   *  - error：已启用且兼容，但加载方明确报告加载/执行失败（error 字段给出原因）；
+   *  - enabled：已启用且无失败记录。
+   *
+   * 注意：不能用「主进程 loaded 表」来判断是否已启用——它只包含 main 端插件，
+   * 会导致 renderer 端插件恒显示为「已禁用」。
+   */
   list(): PluginInfo[] {
     if (!existsSync(this.pluginsDir)) return []
     const infos: PluginInfo[] = []
@@ -66,9 +85,24 @@ export class PluginManager {
         const manifest = readManifest(dir)
         const enabled = this.enabled.isEnabled(manifest.id)
         let status: PluginInfo['status'] = 'disabled'
+        let error: string | undefined
         if (enabled) {
+          // 只有“启用”的插件才需要判断能不能真正跑起来
           const incompat = checkCompatibility(manifest)
-          status = incompat ? 'incompatible' : this.loaded.has(manifest.id) ? 'enabled' : 'disabled'
+          if (incompat) {
+            status = 'incompatible'
+            error = incompat
+          } else {
+            const rt = this.runtimeState.get(manifest.id)
+            if (rt && !rt.loaded) {
+              // 加载方（main 本进程 / renderer 经 IPC 上报）明确报告失败
+              status = 'error'
+              error = rt.error ?? '插件加载失败'
+            } else {
+              // 尚未上报（如 renderer 端仍在异步加载）时按“已启用”展示，避免误报为已禁用
+              status = 'enabled'
+            }
+          }
         }
         infos.push({
           id: manifest.id,
@@ -80,6 +114,7 @@ export class PluginManager {
           platforms: manifest.platforms ?? ['renderer'],
           enabled,
           status,
+          error,
           dir,
         })
       } catch (err) {
@@ -100,6 +135,19 @@ export class PluginManager {
 
   getInfo(id: string): PluginInfo | undefined {
     return this.list().find(p => p.id === id)
+  }
+
+  /**
+   * renderer 宿主上报某插件的加载结果（启用/禁用后由 UI 触发的热加载，或启动期自动加载）。
+   * 'unloaded' 表示已卸载，回到“由启用开关决定”的未知态。
+   */
+  reportRuntimeState(id: string, state: 'loaded' | 'unloaded' | 'error', error?: string): void {
+    if (!id) return
+    if (state === 'unloaded') {
+      this.runtimeState.delete(id)
+      return
+    }
+    this.runtimeState.set(id, state === 'loaded' ? { loaded: true } : { loaded: false, error })
   }
 
   /** 启动期加载所有“已启用且兼容”的主进程插件，随后广播 app:ready */
@@ -219,6 +267,8 @@ export class PluginManager {
       return fail(`删除目录失败：${(err as Error).message}`)
     }
     this.enabled.remove(id)
+    // 清掉运行期状态，避免卸载后重新安装同 id 时继承上一次的加载结果
+    this.runtimeState.delete(id)
     return ok(id, `已卸载 ${id}`)
   }
 
@@ -269,6 +319,8 @@ export class PluginManager {
       return fail(`更新文件失败：${(err as Error).message}`)
     }
     this.enabled.setEnabled(id, true)
+    // 换成了新代码，先清掉旧版本的加载结果
+    this.runtimeState.delete(id)
     await this.loadMainAfterUpdate(newManifest, oldVersion)
     return ok(id, `已更新 ${newManifest.name}@${newManifest.version}`)
   }
@@ -278,6 +330,8 @@ export class PluginManager {
     const target = join(this.pluginsDir, id)
     if (!existsSync(target)) return fail(`插件未安装：${id}`)
     this.enabled.setEnabled(id, true)
+    // 清掉上一次的加载结果，给本次启用一个干净的重试机会（加载方会重新上报）
+    this.runtimeState.delete(id)
     const manifest = readManifest(target)
     const compat = checkCompatibility(manifest)
     if (compat) return fail(`与当前客户端不兼容：${compat}`)
@@ -292,6 +346,7 @@ export class PluginManager {
     if (!existsSync(target)) return fail(`插件未安装：${id}`)
     this.enabled.setEnabled(id, false)
     await this.unloadMain(id)
+    this.runtimeState.delete(id)
     return ok(id, `已禁用 ${id}`)
   }
 
@@ -332,6 +387,8 @@ export class PluginManager {
       return fail(`更新文件失败：${(err as Error).message}`)
     }
     this.enabled.setEnabled(id, true)
+    // 换成了新代码，先清掉旧版本的加载结果
+    this.runtimeState.delete(id)
     await this.loadMainAfterUpdate(manifest, oldVersion)
     return ok(id, `已更新 ${manifest.name}@${manifest.version}`)
   }
@@ -360,6 +417,18 @@ export class PluginManager {
   // ===================== 主进程插件加载/卸载 =====================
   private async loadMain(id: string): Promise<LoadedPlugin | null> {
     if (this.loaded.has(id)) return this.loaded.get(id)!
+    try {
+      const loaded = await this.doLoadMain(id)
+      this.runtimeState.set(id, { loaded: true })
+      return loaded
+    } catch (err) {
+      // 记录失败原因：列表中会显示为「出错」并给出原因，而不是含糊的「已禁用」
+      this.runtimeState.set(id, { loaded: false, error: (err as Error).message })
+      throw err
+    }
+  }
+
+  private async doLoadMain(id: string): Promise<LoadedPlugin> {
     const dir = join(this.pluginsDir, id)
     const manifest = readManifest(dir)
     const entryName = manifest.main ?? DEFAULT_ENTRY
@@ -397,6 +466,7 @@ export class PluginManager {
     this.host.patchManager.unpatchAll(getPatchRecords(loaded.api))
     disposeApi(loaded.api)
     this.loaded.delete(id)
+    this.runtimeState.delete(id)
     this.host.hooks.emit('plugin:unloaded', { id })
   }
 

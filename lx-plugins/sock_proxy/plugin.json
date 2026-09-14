@@ -1,0 +1,8 @@
+{
+  "id": "sock_proxy",
+  "name": "sock_proxy",
+  "version": "1.0.0",
+  "description": "让客户端的网络代理支持 SOCKS5：启用后，「设置 → 网络 → 网络代理」里填写的主机/端口将按 SOCKS5 协议连接（原实现只能走 HTTP 代理）。",
+  "main": "index.js",
+  "platforms": ["renderer"]
+}

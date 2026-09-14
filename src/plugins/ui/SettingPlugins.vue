@@ -46,7 +46,7 @@
       <li v-for="p in list" :key="p.id" :class="$style.item">
         <div :class="$style.itemHead">
           <label :class="$style.switch">
-            <input type="checkbox" :checked="p.enabled" @change="handleToggleEnable(p, $event)" />
+            <input type="checkbox" :checked="p.enabled" :disabled="busy" @change="handleToggleEnable(p, $event)" />
             <span :class="$style.name">{{ p.name }}</span>
           </label>
           <span :class="$style.version">v{{ p.version }}</span>

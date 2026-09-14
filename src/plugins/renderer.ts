@@ -8,9 +8,11 @@
  *  4. 维护 window.lx.pluginMusicSources（Map），musicSdk 会将其合入音乐源。
  *  5. 暴露 window.lx.musicSdk，便于插件以 api.patch 覆盖原搜索/列表等功能。
  *
- * 对源代码的侵入仅两处（均带 `Plugin Manager` 标记）：
+ * renderer 侧对源代码的侵入共四处（均带 `Plugin Manager` 标记）：
  *  - src/renderer/main.ts 中调用 initUserPlugins(app)
  *  - src/renderer/utils/musicSdk/index.js 中合并 window.lx.pluginMusicSources
+ *  - src/renderer/utils/request.js 的 getRequestAgent 中查询 window.lx.pluginNetAgent（插件接管代理 agent）
+ *  - src/renderer/views/Setting/index.vue 中挂上「插件管理」标签页（src/plugins/ui/SettingPlugins.vue）
  */
 import { ipcRenderer } from 'electron'
 import musicSdk from '@renderer/utils/musicSdk'
@@ -48,6 +50,16 @@ interface EntryCodeResult {
   success: boolean
   code?: string
   message?: string
+}
+
+/**
+ * 把 renderer 端插件的加载结果回传给主进程。
+ * 主进程只加载 main 端插件，不知道 renderer 端是否真的加载成功；
+ * 不上报的话，插件管理页就只能靠启用开关猜测状态（历史 bug：renderer 端插件恒显示「已禁用」）。
+ * 上报失败本身不应影响插件运行，因此全部异常都被吞掉。
+ */
+function reportRuntimeState(id: string, state: 'loaded' | 'unloaded' | 'error', error?: string): void {
+  void invoke(PLUGIN_IPC.reportState, { id, state, error }).catch(() => {})
 }
 
 function makeLogger(id: string): PluginApi['logger'] {
@@ -113,6 +125,7 @@ export async function loadRendererPlugin(id: string): Promise<void> {
     return
   }
   const info = list.find(p => p.id === id)
+  // 不在「已启用且兼容」的清单里（例如刚被禁用），状态交给主进程按开关判断
   if (!info) return
 
   let code: string
@@ -122,6 +135,7 @@ export async function loadRendererPlugin(id: string): Promise<void> {
     code = res.code
   } catch (err) {
     console.error(`[plugin] 读取 renderer 插件源码失败 ${id}:`, err)
+    reportRuntimeState(id, 'error', `读取插件入口失败：${(err as Error).message}`)
     return
   }
 
@@ -131,24 +145,28 @@ export async function loadRendererPlugin(id: string): Promise<void> {
     if (module.setup) await module.setup(api)
     loadedRenderers.set(id, { module, api })
     rendererHooks.emit('plugin:loaded', { id })
+    reportRuntimeState(id, 'loaded')
   } catch (err) {
     console.error(`[plugin] 加载 renderer 插件失败 ${id}:`, err)
+    reportRuntimeState(id, 'error', (err as Error).message)
   }
 }
 
 /** 卸载单个 renderer 端插件（调用 uninstall 并回退 patch/hooks） */
 export async function unloadRendererPlugin(id: string): Promise<void> {
   const rec = loadedRenderers.get(id)
-  if (!rec) return
-  try {
-    if (rec.module.uninstall) await rec.module.uninstall()
-  } catch (err) {
-    console.error(`[plugin] 卸载 renderer 插件失败 ${id}:`, err)
+  if (rec) {
+    try {
+      if (rec.module.uninstall) await rec.module.uninstall()
+    } catch (err) {
+      console.error(`[plugin] 卸载 renderer 插件失败 ${id}:`, err)
+    }
+    rendererPatch.unpatchAll(getPatchRecords(rec.api))
+    disposeApi(rec.api)
+    loadedRenderers.delete(id)
+    rendererHooks.emit('plugin:unloaded', { id })
   }
-  rendererPatch.unpatchAll(getPatchRecords(rec.api))
-  disposeApi(rec.api)
-  loadedRenderers.delete(id)
-  rendererHooks.emit('plugin:unloaded', { id })
+  reportRuntimeState(id, 'unloaded')
 }
 
 /** 某 renderer 插件是否已加载 */
@@ -178,6 +196,11 @@ export async function initUserPlugins(_app?: any): Promise<void> {
   // 暴露给源码扩展点与插件
   ;(window as any).lx.pluginMusicSources = musicSources
   ;(window as any).lx.musicSdk = musicSdk
+  // 网络代理 agent 接管点（如 SOCKS5 插件）：
+  //   插件可设置 window.lx.pluginNetAgent = (url, { host, port }) => agent | undefined
+  //   src/renderer/utils/request.js 的 getRequestAgent 会查询它；返回 undefined 表示交还原逻辑。
+  //   未安装相关插件时该值为 null，行为与上游完全一致。
+  if ((window as any).lx.pluginNetAgent === undefined) (window as any).lx.pluginNetAgent = null
 
   // 宿主 API（供 UI 与插件使用）
   const hostApi = createPluginApi(rendererHostCtx, '_host_', APP_VERSION, '') as any
