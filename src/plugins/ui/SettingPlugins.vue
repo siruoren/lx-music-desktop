@@ -148,11 +148,7 @@ export default {
     }
 
     /** 该插件是否提供了设置面板（未注册则不显示「设置」按钮） */
-    const hasSettings = id => {
-      const host = getHost()
-      const settings = host && host.settings
-      return !!(settings && settings.has && settings.has(id))
-    }
+    const hasSettings = id => !!getHost()?.settings?.has?.(id)
 
     /** 展开/收起某插件的设置面板；展开前先刷新一次列表，保证按钮状态是最新的 */
     const toggleSettings = async id => {
