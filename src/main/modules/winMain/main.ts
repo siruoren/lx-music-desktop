@@ -6,6 +6,9 @@ import { getProxy, openDevTools as handleOpenDevTools } from '@main/utils'
 import { mainSend } from '@common/mainIpc'
 import { sendFocus, sendTaskbarButtonClick } from './rendererEvent'
 import { encodePath } from '@common/utils/electron'
+// === Plugin Manager === 插件可接管 Chromium 会话代理（如 SOCKS5），
+// 使 <audio>/<img> 等由 Chromium 直接发起的请求（音乐播放、封面）也走代理。
+import { MAIN_WINDOW_PARTITION, registerMainSessionProxyRestore, resolveSessionProxyRules } from '../../plugins/sessionProxy'
 
 let browserWindow: Electron.BrowserWindow | null = null
 
@@ -66,7 +69,7 @@ export const createWindow = () => {
   const windowSizeInfo = getWindowSizeInfo(global.lx.appSetting['common.windowSizeId'])
 
   const { shouldUseDarkColors, theme } = global.lx.theme
-  const ses = session.fromPartition('persist:win-main')
+  const ses = session.fromPartition(MAIN_WINDOW_PARTITION)
   const proxy = getProxy()
   setSesProxy(ses, proxy?.host, proxy?.port)
 
@@ -130,10 +133,15 @@ export const closeWindow = () => {
 }
 
 const setSesProxy = (ses: Electron.Session, host?: string, port?: string | number) => {
-  if (host) {
+  // === Plugin Manager === 代理规则由插件系统决定：插件接管时优先用插件的规则
+  // （例如 sock_proxy：Chromium 原生 SOCKS5，或指向插件本地桥的 HTTP 代理），
+  // 否则回落到 app 自身的网络代理。这样即使用户改动 app 的网络设置、或窗口被重建，
+  // 插件声明的代理依然生效。
+  const rules = resolveSessionProxyRules(host, port)
+  if (rules) {
     void ses.setProxy({
       mode: 'fixed_servers',
-      proxyRules: `http://${host}:${port}`,
+      proxyRules: rules,
     })
   } else {
     void ses.setProxy({
@@ -146,6 +154,8 @@ export const setProxy = () => {
   const proxy = getProxy()
   setSesProxy(browserWindow.webContents.session, proxy?.host, proxy?.port)
 }
+// === Plugin Manager === 让插件在撤销会话代理接管时能回到 app 自身的设置
+registerMainSessionProxyRestore(setProxy)
 
 
 export const sendEvent = <T = any>(name: string, params?: T) => {

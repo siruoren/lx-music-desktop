@@ -160,6 +160,18 @@ export interface PluginApi {
   setData: (key: string, value: any) => void
   /** 客户端全局对象（main 端为 global.lx，renderer 端为 window.lx） */
   app: any
+  /**
+   * 声明 Chromium 会话代理（**仅 main 端可用**）。
+   *
+   * `<audio>`/`<img>` 等由 Chromium 直接发起的请求（音乐播放、封面加载）不经过
+   * `src/renderer/utils/request.js`，只接管 Node 的 http.Agent 影响不到它们；
+   * 通过本方法把代理设到**会话**上，播放才会真正走代理。
+   *
+   * @param rules Electron 的 proxyRules 字符串，如 `'socks5://127.0.0.1:1080'`、
+   *   `'http://127.0.0.1:12345'`（指向插件自建的本地桥）；传 `null` 撤销接管、
+   *   回到 app 自身的网络代理设置。
+   */
+  setSessionProxy?: (rules: string | null) => void
 }
 
 /** renderer 端独有的插件 API（注册音乐源、设置面板等 UI/渲染相关能力） */

@@ -71,7 +71,20 @@ export class PluginManager {
 
   /** 合并写入某插件配置，返回写入后的完整配置 */
   setConfig(id: string, patch: Record<string, any>): Record<string, any> {
-    return this.config.patch(id, patch)
+    const next = this.config.patch(id, patch)
+    // 主进程插件同样要感知配置变化：设置面板是在 renderer 里改的，但 main 端的插件
+    // （如 sock_proxy 的 Chromium 会话代理/本地桥）必须立刻跟着更新，否则要重启才生效。
+    const loaded = this.loaded.get(id)
+    if (loaded?.module.onConfigChange) {
+      try {
+        void Promise.resolve(loaded.module.onConfigChange(next)).catch(err => {
+          console.error(`[plugin] onConfigChange 执行失败 ${id}:`, err)
+        })
+      } catch (err) {
+        console.error(`[plugin] onConfigChange 执行失败 ${id}:`, err)
+      }
+    }
+    return next
   }
 
   // ===================== 扫描 / 列表 =====================

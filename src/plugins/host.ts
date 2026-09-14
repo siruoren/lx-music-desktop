@@ -26,6 +26,13 @@ export interface HostContext {
   setConfig?: (pluginId: string, patch: Record<string, any>) => void
   /** 注册插件设置面板（renderer 端才有对应 UI） */
   registerSettings?: (pluginId: string, spec: PluginSettingsSpec) => void
+  /**
+   * 声明 Chromium 会话代理（仅 main 端提供）。
+   * 传入 Electron 的 proxyRules 字符串（如 `'socks5://127.0.0.1:1080'`）即接管，
+   * 传 null 撤销接管、回到 app 自身的网络代理设置。用于让「播放」等由 Chromium
+   * 直接发起的请求也走代理（详见 ./sessionProxy.ts）。
+   */
+  setSessionProxy?: (pluginId: string, rules: string | null) => void
 }
 
 export interface PatchRecord {
@@ -112,6 +119,12 @@ export function createPluginApi(
   // 设置面板只在有 UI 的宿主（renderer）里可用；main 端不提供，插件据此判断能否被配置
   if (ctx.registerSettings) {
     api.registerSettings = (spec: PluginSettingsSpec) => { ctx.registerSettings!(pluginId, spec) }
+  }
+
+  // Chromium 会话代理接管（仅 main 端）：让 <audio>/<img> 等 Chromium 直接发起的
+  // 请求也走插件提供的代理，否则只有 Node 的 http.Agent 被接管，播放仍会直连。
+  if (ctx.setSessionProxy) {
+    api.setSessionProxy = (rules: string | null) => { ctx.setSessionProxy!(pluginId, rules ?? null) }
   }
 
   // 供卸载时回退使用

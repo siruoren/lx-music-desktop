@@ -78,11 +78,40 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 | 拦截 / 改写数据流 | `api.hooks.intercept('name', (ctx, next) => next(ctx))` | 责任链，可改写 `ctx` 或直接短路 |
 | 注册音乐源 | `api.registerMusicSource(id, name, module)` | 注册后参与 `musicSdk.init()` 与跨源搜索，卸载自动移除 |
 | 私有持久化 | `api.getData(key, def)` / `api.setData(key, value)` | main 端存 `userData/plugins/<id>/data.json`，renderer 端存 localStorage |
+| 插件配置（设置面板） | `api.getConfig()` / `api.setConfig(patch)` / `api.registerSettings(spec)` | 配置存 `<插件目录>/config.json`，与 `data.json` 分开；面板由宿主渲染，插件无需自带 Vue 组件 |
+| 接管 Chromium 会话代理 | `api.setSessionProxy(rules \| null)`（**仅 main 端**） | 把 Electron `proxyRules` 设到 BrowserWindow 的 Chromium 会话上，使 `<audio>`/`<img>` 等由 Chromium 直接发起的请求（**音乐播放**、封面）也走代理；传 `null` 撤销、回到 app 自身的网络代理。详见下节 |
+| 接管 Node 请求代理 | `window.lx.pluginNetAgent = (url, proxyOptions) => agent \| undefined`（renderer 端） | 接管各音乐源 API 请求（搜索/歌单/歌词…）所用的 http.Agent |
 | 日志 | `api.logger.info/warn/error` | 统一带 `[plugin:<id>]` 前缀 |
+
+## 代理为什么有两层（重要）
+
+`<audio>` 播放与封面加载**不经过** `src/renderer/utils/request.js`：它们是 Chromium 自己发起的请求，
+走的是 BrowserWindow 的 **Chromium 会话**。因此只接管 Node 的 http.Agent 会出现
+「设置面板里测试连接通过、接口也走了代理，但**播放依然直连**」的现象。
+
+要让播放也走代理，必须两层都覆盖：
+
+| 层 | 覆盖范围 | 接管方式 | 代码位置 |
+| --- | --- | --- | --- |
+| Node 请求层 | 音乐源 API：搜索 / 歌单 / 歌词 / 评论 / 榜单 / 热词 | `window.lx.pluginNetAgent` | `src/renderer/utils/request.js` |
+| Chromium 会话层 | **音乐播放**（`<audio>`）、封面（`<img>`） | `api.setSessionProxy(rules)` | `src/plugins/sessionProxy.ts` + `src/main/modules/winMain/main.ts` |
+
+规则优先级：**插件声明 > app 自身的网络代理 > 直连**（`resolveSessionProxyRules`），
+并且 app 改网络设置或重建窗口后插件声明依然生效。
+
+> ⚠️ `sock_proxy` 因此声明为 `"platforms": ["main", "renderer"]`：renderer 端接管 Node 请求，
+> main 端接管会话代理。**只声明 renderer 端时播放不会走代理**。
+>
+> 另注：Chromium 的 `session.setProxy` 支持 `socks5://host:port`，但**不支持带用户名/密码的
+> SOCKS5**（URL 里的凭据会被静默忽略）。`sock_proxy` 需要认证时会在 main 端起一个只监听
+> `127.0.0.1` 的本地 HTTP 桥，自己完成 RFC1929 认证后再转发。
+>
+> 未覆盖：下载任务有独立的 agent 构造（`src/common/utils/download/util.ts`，运行在 download
+> worker 中、拿不到 `window.lx`）。
 
 ## 与上游代码的合并关系
 
-插件系统对上游源码只有 **5 处**带 `Plugin Manager` 标记的极小改动：
+插件系统对上游源码只有 **6 处**带 `Plugin Manager` 标记的极小改动：
 
 | 文件 | 改动 |
 | --- | --- |
@@ -90,10 +119,11 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 | `src/renderer/main.ts` | 初始化渲染端插件宿主 |
 | `src/renderer/utils/musicSdk/index.js` | 调用时合并插件注册的音乐源 |
 | `src/renderer/utils/request.js` | `getRequestAgent` 中查询 `window.lx.pluginNetAgent`，允许插件接管代理 agent |
+| `src/main/modules/winMain/main.ts` | 应用会话代理前先问插件系统（`resolveSessionProxyRules`），使插件接管能作用于「播放」 |
 | `src/renderer/views/Setting/index.vue` | 新增「插件管理」标签页 |
 
 其余全部是本目录与 `src/plugins/` 下的**新增文件**，合入上游更新时不会冲突：
-同步上游后只需保证上述 5 处标记仍在即可。这 5 处使用**完全一致的标记文本**，一条命令即可全部定位：
+同步上游后只需保证上述 6 处标记仍在即可。这 6 处使用**完全一致的标记文本**，一条命令即可全部定位：
 
 ```bash
 grep -rnF '=== Plugin Manager ===' src

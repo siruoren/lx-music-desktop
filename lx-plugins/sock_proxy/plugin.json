@@ -1,8 +1,8 @@
 {
   "id": "sock_proxy",
   "name": "sock_proxy",
-  "version": "2.0.0",
-  "description": "为客户端提供 SOCKS5 代理：在「插件管理 → sock_proxy → 设置」里填写地址、端口、账户名、密码并启用后，所有音乐源请求都会走 SOCKS5 隧道（账户密码留空则为无认证）。配置保存在插件自己的目录，与 app 的网络设置互不影响。",
+  "version": "2.1.0",
+  "description": "为客户端提供 SOCKS5 代理：在「插件管理 → sock_proxy → 设置」里填写地址、端口、账户名、密码并启用后，音乐源请求与音乐播放（<audio>）都会走 SOCKS5 隧道（账户密码留空则为无认证）。需要认证时插件会自动起一个只监听 127.0.0.1 的本地 HTTP 桥，因为 Chromium 的会话代理不支持带凭据的 SOCKS。配置保存在插件自己的目录，与 app 的网络设置互不影响。",
   "main": "index.js",
-  "platforms": ["renderer"]
+  "platforms": ["main", "renderer"]
 }
