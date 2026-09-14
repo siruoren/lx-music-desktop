@@ -103,10 +103,7 @@ export default {
     let timer = null
     let offConfig = null
 
-    const getSettingsApi = () => {
-      const host = window.lx && window.lx.plugins
-      return (host && host.settings) || null
-    }
+    const getSettingsApi = () => window.lx?.plugins?.settings || null
 
     const reload = () => {
       const api = getSettingsApi()
@@ -182,7 +179,7 @@ export default {
     onMounted(() => {
       reload()
       const api = getSettingsApi()
-      if (api && api.subscribe) {
+      if (api?.subscribe) {
         offConfig = api.subscribe((id, config) => {
           if (id !== props.pluginId) return
           values.value = config || {}
