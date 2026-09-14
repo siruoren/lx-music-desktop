@@ -95,7 +95,7 @@ export interface PluginModule {
  */
 export interface PluginSettingField {
   /** 字段类型 */
-  type: 'switch' | 'text' | 'password' | 'number' | 'textarea' | 'info' | 'button' | 'list' | 'divider'
+  type: 'switch' | 'text' | 'password' | 'number' | 'textarea' | 'info' | 'button' | 'buttons' | 'list' | 'divider'
   /** 配置键（switch / text / password / number / textarea 必填） */
   key?: string
   /** 展示名称 */
@@ -110,12 +110,27 @@ export interface PluginSettingField {
   disabled?: boolean
   /** type=button 时点击触发的动作名（透传给 module.onSettingsAction） */
   action?: string
+  /**
+   * type=buttons 时的按钮组：**同一行水平排列**，每个按钮各有自己的动作名。
+   * 相比写多个 type=button 字段（会各占一行、纵向堆叠），它适合「导入 / 移除」这类成对操作。
+   */
+  buttons?: PluginSettingButton[]
   /** type=info 时的文本；传函数则每次渲染求值，便于显示实时状态 */
   text?: string | (() => string)
   /** type=list 时的条目；传函数则每次渲染求值 */
   items?: () => Array<{ name?: string, desc?: string, status?: string }>
   /** 控件右侧的附加文字（如「上次更新：…」）；传函数则每次渲染求值 */
   suffix?: string | (() => string)
+}
+
+/** type=buttons 字段里的单个按钮 */
+export interface PluginSettingButton {
+  /** 按钮文字 */
+  label: string
+  /** 点击触发的动作名（透传给 module.onSettingsAction） */
+  action: string
+  /** 是否禁用该按钮 */
+  disabled?: boolean
 }
 
 /** 插件设置面板描述（由插件在 setup 时通过 api.registerSettings 注册） */

@@ -8,7 +8,7 @@ import { sendFocus, sendTaskbarButtonClick } from './rendererEvent'
 import { encodePath } from '@common/utils/electron'
 // === Plugin Manager === 插件可接管 Chromium 会话代理（如 SOCKS5），
 // 使 <audio>/<img> 等由 Chromium 直接发起的请求（音乐播放、封面）也走代理。
-import { MAIN_WINDOW_PARTITION, registerMainSessionProxyRestore, resolveSessionProxyRules } from '../../plugins/sessionProxy'
+import { MAIN_WINDOW_PARTITION, registerMainSessionProxyRestore, resolveSessionProxyRules } from '../../../plugins/sessionProxy'
 
 let browserWindow: Electron.BrowserWindow | null = null
 

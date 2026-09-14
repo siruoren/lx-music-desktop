@@ -11,44 +11,57 @@ env:
 # 构建各平台安装包与插件，并由 Release 任务自动创建 GitHub Pre-release，
 # 把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
 # 插件按「一个插件一个任务 / 一个 Artifact」的方式构建上传，可单独下载某一个插件。
+#
+# 快速通道：若本次推送只改了插件目录（lx-plugins/**，含插件版本说明等），
+# 则跳过各平台安装包构建，只重新构建插件，并把新的 .lxplugin 覆盖上传到
+# **最新的 pre-release** 附件上（不新建预发布）——插件版本始终与 app 版本一致，
+# 因此附件名不变、直接替换即可。
 # 权限最小化：默认只读，仅 Release 任务提权到 contents: write（创建预发布需要）。
 permissions:
   contents: read
 
 jobs:
-  # CheckCode:
-  #   name: Lint Code
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Check out git repository
-  #       uses: actions/checkout@v6
+  # 变更范围检测：决定走「全量构建」还是「仅插件」快速通道。
+  Changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      plugins_only: ${{ steps.detect.outputs.plugins_only }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
-  #     - name: Install Node.js
-  #       uses: actions/setup-node@v4
-  #       with:
-  #         node-version: 20
-
-  #     - name: Cache file
-  #       uses: actions/cache@v4
-  #       with:
-  #         path: |
-  #           node_modules
-  #           $HOME/.cache/electron
-  #           $HOME/.cache/electron-builder
-  #           $HOME/.npm/_prebuilds
-  #         key: ${{ runner.os }}-build-caches-${{ hashFiles('**/package-lock.json') }}
-  #         restore-keys: |
-  #           ${{ runner.os }}-build-
-
-  #     - name: Install Dependencies
-  #       run: |
-  #         npm ci
-
-  #     - name: Lint src code
-  #       run: npm run lint
+      - name: Detect plugin-only changes
+        id: detect
+        run: |
+          set -euo pipefail
+          before='${{ github.event.before }}'
+          zero='0000000000000000000000000000000000000000'
+          # 首次推送 / 强制推送 / 非推送事件拿不到可靠的变更范围，按全量构建处理（安全兜底）
+          if [ -z "$before" ] || [ "$before" = "$zero" ] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "plugins_only=false" >> "$GITHUB_OUTPUT"
+            echo "无法确定变更范围（首次推送 / 强推），按全量构建处理"
+            exit 0
+          fi
+          git diff --name-only "$before" "${{ github.sha }}" > changed-files.txt
+          echo "本次变更的文件："
+          cat changed-files.txt
+          # 全部命中插件相关路径（插件目录 / 插件构建工作流）才算「仅插件变更」。
+          # 注意 src/plugins/** 是宿主代码、package.json 关系到安装包版本，都不算插件变更。
+          if [ -s changed-files.txt ] && ! grep -qvE '^(lx-plugins/|\.github/workflows/plugin-build\.yml$)' changed-files.txt; then
+            echo "plugins_only=true" >> "$GITHUB_OUTPUT"
+            echo "判定：仅插件目录变更 → 跳过安装包构建，只构建插件并更新最新 pre-release 的附件"
+          else
+            echo "plugins_only=false" >> "$GITHUB_OUTPUT"
+            echo "判定：存在 app 源码 / 配置变更 → 全量构建"
+          fi
 
   Windows:
     name: Windows
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
     runs-on: windows-latest
     # needs: CheckCode
     steps:
@@ -108,6 +121,8 @@ jobs:
 
   Windows_7:
     name: Windows_7
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
     runs-on: windows-latest
     env:
       BUILD_WIN7: true
@@ -173,6 +188,8 @@ jobs:
 
   Mac:
     name: Mac
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
     runs-on: macos-latest
     # needs: CheckCode
     steps:
@@ -221,6 +238,8 @@ jobs:
 
   Linux:
     name: Linux
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
     runs-on: ubuntu-latest
     # needs: CheckCode
     steps:
@@ -339,18 +358,20 @@ jobs:
           echo "发现插件项目：$LIST"
 
       # 生成 Release 说明里的插件清单（插件名 + 版本 + 说明），每个插件一行，
-      # 插件版本取自各插件自己的 plugin.json，新增插件无需改本文件。
+      # 插件版本统一使用 app 版本（构建时由 build.js 自动注入，plugin.json 不再维护 version），
+      # 新增插件无需改本文件。
       - name: Describe plugins
         id: describe
         env:
           PLUGINS: ${{ steps.plugins.outputs.plugins }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           node -e "
             const fs = require('fs'), path = require('path');
             const names = JSON.parse(process.env.PLUGINS);
             const lines = names.map(name => {
               const pj = JSON.parse(fs.readFileSync(path.join('lx-plugins', name, 'plugin.json'), 'utf-8'));
-              return '- **' + name + '.lxplugin** — v' + pj.version + (pj.description ? '：' + pj.description : '');
+              return '- **' + name + '.lxplugin** — v' + process.env.APP_VERSION + (pj.description ? '：' + pj.description : '');
             });
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'plugin_list<<EOF\n' + lines.join('\n') + '\nEOF\n');
           "
@@ -386,12 +407,15 @@ jobs:
           path: lx-plugins/${{ matrix.plugin }}/dist/${{ matrix.plugin }}.lxplugin
           if-no-files-found: error
 
-  # 等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
+  # 全量构建：等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
   # 并把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
   # 每个插件都单独作为一个附件上传（各自一个 Artifact / 一个独立文件名），可单独下载某一个插件。
+  #
+  # 仅插件变更（plugins_only == 'true'）：安装包任务被跳过，这里不新建预发布，
+  # 而是把新构建的 .lxplugin **覆盖上传到最新的 pre-release**（--clobber 替换同名附件）。
   Release:
     name: Create Pre-release
-    needs: [Windows, Windows_7, Mac, Linux, PluginMeta, Plugins]
+    needs: [Changes, Windows, Windows_7, Mac, Linux, PluginMeta, Plugins]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -409,6 +433,7 @@ jobs:
         run: ls -lhR dist
 
       - name: Create Pre-release
+        if: needs.Changes.outputs.plugins_only != 'true'
         uses: softprops/action-gh-release@v3
         with:
           # 必须显式指定 target_commitish：该参数默认指向「仓库默认分支」，
@@ -450,9 +475,107 @@ jobs:
           draft: false
           prerelease: true
 
+      # ===== 仅插件变更的快速通道：把新插件覆盖上传到最新的 pre-release =====
+      - name: Find latest pre-release
+        id: latest
+        if: needs.Changes.outputs.plugins_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # gh release list 默认按创建时间倒序；取第一个预发布
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 50 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease)][0].tagName // empty')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "最新的 pre-release：${tag:-（不存在，将回退为新建）}"
+
+      - name: Upload plugins to latest pre-release
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/lx-plugin-*/*.lxplugin)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::没有找到插件构建产物（dist/lx-plugin-*/*.lxplugin）"
+            exit 1
+          fi
+          echo "覆盖上传以下插件附件到 pre-release $TAG（--clobber 替换同名附件）："
+          ls -lh "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      # 仓库还没有任何 pre-release（首次发布就只改了插件）时，退化为新建一个仅含插件的预发布
+      - name: Create Pre-release (plugins only, fallback)
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag == ''
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+
+            本次推送只涉及插件目录变更（无需重打安装包），该预发布仅包含插件附件
+            （`.lxplugin`，每个插件单独一个附件）。
+
+            - 提交：`${{ github.sha }}`
+            - 工作流运行：#${{ github.run_number }}
+
+            ### 插件（每个插件单独一个附件）
+
+            ${{ needs.PluginMeta.outputs.plugin_list }}
+
+            ### 插件安装
+
+            下载需要的 `.lxplugin` 文件后，在客户端「设置 → 插件管理」中点击「安装插件」上传即可安装/更新。
+          files: |
+            dist/lx-plugin-*/*.lxplugin
+          preserve_order: true
+          generate_release_notes: true
+          draft: false
+          prerelease: true
+
+      # 上传完必须核对一次：插件附件数/文件名要和 dist/ 里准备上传的完全一致。
+      # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
+      - name: Verify plugins on latest pre-release
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in dist/lx-plugin-*/*.lxplugin; do basename "$f"; done | sort > expected.txt
+          echo "期望的插件附件（$(wc -l < expected.txt | tr -d ' ') 个）："
+          cat expected.txt
+
+          ok=0
+          for i in $(seq 1 5); do
+            # 只比对 .lxplugin 附件：pre-release 上还有历史安装包，不在本次核对范围
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | grep '\.lxplugin$' | sort > actual.txt
+            if diff -q expected.txt actual.txt > /dev/null; then
+              ok=1
+              break
+            fi
+            echo "第 $i 次核对未通过（release 上 $(wc -l < actual.txt | tr -d ' ') 个插件附件），3 秒后重试…"
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::pre-release $TAG 的插件附件与预期不一致（下面 - 表示缺失、+ 表示多余）："
+            diff -u expected.txt actual.txt || true
+            exit 1
+          fi
+          echo "✅ 已把最新插件附件覆盖到 pre-release $TAG（$(wc -l < actual.txt | tr -d ' ') 个插件齐全）"
+
       # 上传完必须核对一次：附件数/文件名要和 dist/ 里准备上传的文件完全一致。
       # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
       - name: Verify release assets
+        if: needs.Changes.outputs.plugins_only != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}

@@ -39,7 +39,9 @@
       </div>
     </div>
 
-    <div v-if="loading" :class="$style.tip">加载中…</div>
+    <!-- 只在「还没有列表数据」时才显示加载占位：已有数据时刷新不卸载列表，
+         否则每次刷新（含点开设置前的刷新）都会把整个列表拆掉重建，页面就会晃动 -->
+    <div v-if="loading && !list.length" :class="$style.tip">加载中…</div>
     <div v-else-if="!list.length" :class="$style.tip">暂无已安装插件。上传一个 .lxplugin 文件即可安装。</div>
 
     <ul v-else :class="$style.list">
@@ -129,35 +131,43 @@ export default {
       setTimeout(() => { if (message.value === text) message.value = '' }, 5000)
     }
 
-    const refresh = async() => {
-      loading.value = true
+    /**
+     * 刷新插件列表。
+     * @param {object} [options]
+     * @param {boolean} [options.silent] 静默刷新：不切换 loading 占位、列表原地更新。
+     *   用在「展开设置面板」等场景，避免刷新引起的布局抖动。
+     */
+    const refresh = async({ silent = false } = {}) => {
+      if (!silent) loading.value = true
       try {
         const mgr = await waitManager()
         if (!mgr) {
-          showMsg('插件系统尚未就绪，请稍后重试', 'error')
+          if (!silent) showMsg('插件系统尚未就绪，请稍后重试', 'error')
           return
         }
         list.value = await mgr.list()
         // 插件被禁用/卸载后不再注册设置面板，此时自动收起面板
         if (openSettingsId.value && !hasSettings(openSettingsId.value)) openSettingsId.value = ''
       } catch (err) {
-        showMsg('获取插件列表失败：' + (err.message || err), 'error')
+        if (!silent) showMsg('获取插件列表失败：' + (err.message || err), 'error')
+        console.error('[plugin] 获取插件列表失败：', err)
       } finally {
-        loading.value = false
+        if (!silent) loading.value = false
       }
     }
 
     /** 该插件是否提供了设置面板（未注册则不显示「设置」按钮） */
     const hasSettings = id => !!getHost()?.settings?.has?.(id)
 
-    /** 展开/收起某插件的设置面板；展开前先刷新一次列表，保证按钮状态是最新的 */
+    /**
+     * 展开/收起某插件的设置面板。
+     * 先立即展开（面板自己挂载时会读取最新 spec/config），再后台静默刷新列表，
+     * 保证按钮状态最新；不再像旧版那样「等刷新完才展开」——那会让点击后有一段
+     * 无响应的空窗，且刷新卸载/重建列表会造成页面晃动。
+     */
     const toggleSettings = async id => {
-      if (openSettingsId.value === id) {
-        openSettingsId.value = ''
-        return
-      }
-      await refresh()
-      openSettingsId.value = id
+      openSettingsId.value = openSettingsId.value === id ? '' : id
+      if (openSettingsId.value) void refresh({ silent: true })
     }
 
     /** 安装/更新后同步 renderer 端插件的加载状态 */

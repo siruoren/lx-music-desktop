@@ -30,9 +30,13 @@
           <span v-if="field.tip" :class="$style.tip">{{ field.tip }}</span>
         </div>
 
-        <div v-else-if="field.type === 'button'" :class="$style.btnRow">
-          <button :class="$style.btn" :disabled="busy || field.disabled" @click="runAction(field)">
-            {{ busy ? '处理中…' : field.label }}
+        <!-- button 是单个按钮，buttons 是「一行多个按钮」（水平排列，各自带动作） -->
+        <div v-else-if="field.type === 'button' || field.type === 'buttons'" :class="$style.btnRow">
+          <button
+            v-for="(btn, btnIndex) in buttonsOf(field)" :key="btnIndex" :class="$style.btn"
+            :disabled="busy || btn.disabled" @click="runAction(btn)"
+          >
+            {{ busy ? '处理中…' : btn.label }}
           </button>
           <span v-if="suffixOf(field)" :class="$style.suffix">{{ suffixOf(field) }}</span>
           <span v-if="field.tip" :class="$style.tip">{{ field.tip }}</span>
@@ -168,6 +172,15 @@ export default {
       return 'text'
     }
 
+    /**
+     * 把「单个 button 字段」与「一行多个按钮的 buttons 字段」统一成按钮数组，
+     * 模板里一套 v-for 就能渲染。buttons 缺省或写成空数组时不渲染任何按钮。
+     */
+    const buttonsOf = field => {
+      if (field.type === 'buttons') return Array.isArray(field.buttons) ? field.buttons : []
+      return [{ label: field.label || '', action: field.action, disabled: field.disabled }]
+    }
+
     /** 合并写入宿主配置（写到哪里由宿主决定：插件目录的 config.json） */
     const writeConfig = patch => {
       const api = getSettingsApi()
@@ -286,6 +299,7 @@ export default {
       itemsOf,
       valueOf,
       inputType,
+      buttonsOf,
       setValue,
       onInput,
       onChange,
