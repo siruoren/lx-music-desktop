@@ -8,9 +8,10 @@
  *  4. 维护 window.lx.pluginMusicSources（Map），musicSdk 会将其合入音乐源。
  *  5. 暴露 window.lx.musicSdk，便于插件以 api.patch 覆盖原搜索/列表等功能。
  *
- * 对源代码的侵入仅两处（均带 `Plugin Manager` 标记）：
+ * 对源代码的侵入仅三处（均带 `Plugin Manager` 标记）：
  *  - src/renderer/main.ts 中调用 initUserPlugins(app)
  *  - src/renderer/utils/musicSdk/index.js 中合并 window.lx.pluginMusicSources
+ *  - src/renderer/utils/request.js 的 getRequestAgent 中查询 window.lx.pluginNetAgent（插件接管代理 agent）
  */
 import { ipcRenderer } from 'electron'
 import musicSdk from '@renderer/utils/musicSdk'
@@ -178,6 +179,11 @@ export async function initUserPlugins(_app?: any): Promise<void> {
   // 暴露给源码扩展点与插件
   ;(window as any).lx.pluginMusicSources = musicSources
   ;(window as any).lx.musicSdk = musicSdk
+  // 网络代理 agent 接管点（如 SOCKS5 插件）：
+  //   插件可设置 window.lx.pluginNetAgent = (url, { host, port }) => agent | undefined
+  //   src/renderer/utils/request.js 的 getRequestAgent 会查询它；返回 undefined 表示交还原逻辑。
+  //   未安装相关插件时该值为 null，行为与上游完全一致。
+  if ((window as any).lx.pluginNetAgent === undefined) (window as any).lx.pluginNetAgent = null
 
   // 宿主 API（供 UI 与插件使用）
   const hostApi = createPluginApi(rendererHostCtx, '_host_', APP_VERSION, '') as any
