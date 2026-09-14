@@ -7,20 +7,24 @@
  * SOCKS5 agent，从而让 SOCKS5 代理真正生效，且不改动原请求逻辑。
  *
  * 接管点约定（见 src/renderer/utils/request.js 与 src/plugins/renderer.ts）：
- *   window.lx.pluginNetAgent = (url, { host, port }) => agent | undefined
- *   - 返回 agent  → 用该 agent 发请求（本插件返回 SOCKS5 agent）
- *   - 返回 undefined → 不接管，交还原逻辑（HTTP 代理 / 直连）
+ *   window.lx.pluginNetAgent = (url, proxyOptions) => agent | undefined
+ *   - 返回 agent → 用该 agent 发请求（本插件返回 SOCKS5 agent）
+ *   - 返回假值  → 不接管，交还原逻辑（HTTP 代理 / 直连）
+ *   是否接管**只取决于本插件自己的配置**（开关是否打开、地址是否填写），
+ *   与 app「设置 → 网络」里那套 HTTP 代理配置相互独立、互不影响。
+ *
+ * 配置：全部在「设置 → 插件管理 → sock_proxy → 设置」中填写
+ * （启用开关 / 地址 / 端口 / 账户名 / 密码 / 远程 DNS），
+ * 保存在插件目录的 config.json，下次启动客户端自动生效。
+ * 账户名与密码都留空时按 RFC 1928 使用「无认证」方式（AUTH_NONE）。
  *
  * 生效范围：所有经 `src/renderer/utils/request.js` 的请求 —— 各音乐源的搜索 /
  * 歌单 / 歌词 / 评论 / 榜单 / 热词 / 封面等。
  * 未覆盖：下载任务另有一份独立的 agent 构造（`src/common/utils/download/util.ts`，
  * 运行在 download worker 中、且 worker 里拿不到 window.lx），详见 README「覆盖范围」。
  *
- * 配置：启用/禁用由「插件管理」页的开关控制；其余选项存在插件私有数据里，
- * 可在 DevTools 控制台用 window.lxPlugins.sockProxy.setConfig({...}) 修改。
- *
  * 入口以 CommonJS 导出（构建脚本会把它包进单个 .lxplugin 文件）：
- *   module.exports = { setup, uninstall, onUpdate }
+ *   module.exports = { setup, uninstall, onUpdate, onConfigChange, onSettingsAction }
  */
 'use strict'
 
@@ -293,18 +297,34 @@ const Socks5HttpsAgent = createSocksAgentClass(https.Agent, true)
 
 /** ============================ 插件生命周期 ============================ */
 
-/** 默认配置；可在 DevTools 控制台用 window.lxPlugins.sockProxy.setConfig({...}) 修改 */
+/** 连接测试使用的目标（只建隧道，不发送业务数据） */
+const TEST_TARGET = { host: 'www.baidu.com', port: 443 }
+
+/**
+ * 默认配置。全部可在「设置 → 插件管理 → sock_proxy → 设置」中修改，
+ * 账户名与密码都留空时使用「无认证」方式（RFC 1928 AUTH_NONE）。
+ */
 const DEFAULT_CONFIG = {
-  /** true：把域名交给代理解析（远程 DNS，推荐）；false：本地解析后再连接 */
-  remoteDns: true,
-  /** SOCKS5 用户名/密码（可留空） */
+  /** 是否启用 SOCKS5 代理（关闭时完全不接管网络请求） */
+  enable: false,
+  /** 代理地址（为空时不接管） */
+  host: '',
+  /** 代理端口（留空时用 defaultPort） */
+  port: '',
+  /** 账户名 / 密码；两者都为空 → 无认证 */
   username: '',
   password: '',
+  /** true：把域名交给代理解析（远程 DNS，推荐，避免本地 DNS 泄漏）；false：本地解析后再连接 */
+  remoteDns: true,
   /** 握手超时（毫秒） */
   timeout: DEFAULT_TIMEOUT,
   /** 代理端口留空时的默认端口 */
   defaultPort: DEFAULT_SOCKS_PORT,
 }
+
+/** setup 时写入，供 module 上的生命周期回调使用（它们拿不到 setup 的作用域） */
+let applyExternalConfig = null
+let runConnectionTest = null
 
 module.exports = {
   setup(api) {
@@ -314,10 +334,25 @@ module.exports = {
       return
     }
 
-    const config = Object.assign({}, DEFAULT_CONFIG, api.getData('config', {}))
+    // 配置来自插件自己的 config.json（<插件目录>/config.json），启动时自动载入
+    const config = Object.assign({}, DEFAULT_CONFIG, api.getConfig())
     // key: `${https?}://${proxyHost}:${proxyPort}` → agent（同一代理+协议复用，keepAlive 才能真正生效）
     const agents = new Map()
     let loggedOnce = false
+    let warnedConflict = false
+    /** 最近一次运行状态，显示在设置面板上 */
+    let status = ''
+
+    const proxyPortOf = () => String(config.port || '') || String(config.defaultPort)
+    const hasAuth = () => !!(config.username || config.password)
+    const readConfig = () => Object.assign({}, config)
+
+    const describe = () => {
+      if (!config.enable) return '未启用'
+      if (!config.host) return '已启用，但还没填写代理地址'
+      return `已接管：SOCKS5 ${config.host}:${proxyPortOf()}（${config.remoteDns ? '远程' : '本地'} DNS，${hasAuth() ? '用户名/密码认证' : '无认证'}）`
+    }
+    status = describe()
 
     const agentFor = (secure, proxyHost, proxyPort) => {
       const key = `${secure ? 'https' : 'http'}://${proxyHost}:${proxyPort}`
@@ -337,60 +372,150 @@ module.exports = {
       return agent
     }
 
+    /** 连接参数变化时丢弃旧 agent（keepAlive 连接是按旧参数建立的，必须重建） */
+    const dropAgents = () => {
+      for (const agent of agents.values()) {
+        try { agent.destroy() } catch { /* noop */ }
+      }
+      agents.clear()
+      loggedOnce = false
+    }
+
     /**
      * 代理 agent 接管函数：由 src/renderer/utils/request.js 的 getRequestAgent 调用。
-     * 返回 undefined 表示不接管（例如未配置代理、非 http(s) 请求），交还原逻辑。
+     * 返回假值表示不接管（未启用 / 未填地址 / 非 http(s) 请求），交还原逻辑。
+     * 是否接管只看本插件自己的配置，与 app 的 HTTP 代理设置无关。
      */
-    const provider = (url, proxyOptions) => {
-      if (!proxyOptions || !proxyOptions.host) return undefined
+    const provider = (url, proxyOptions = null) => {
+      if (!config.enable || !config.host) return undefined
       if (typeof url !== 'string' || !/^https?:/i.test(url)) return undefined
 
       const secure = /^https:/i.test(url)
-      const proxyPort = String(proxyOptions.port || '') || String(config.defaultPort)
-
+      if (!warnedConflict && proxyOptions && proxyOptions.host) {
+        warnedConflict = true
+        api.logger.warn('app 自身的「网络代理」也开着，本插件优先接管；如非本意请到 设置 → 网络 关闭 app 的 HTTP 代理')
+      }
       if (!loggedOnce) {
         loggedOnce = true
-        api.logger.info(
-          `已接管网络代理：SOCKS5 ${proxyOptions.host}:${proxyPort}` +
-          `（远程 DNS：${config.remoteDns ? '开' : '关'}${config.username ? '，带认证' : ''}）`,
-        )
+        api.logger.info(`已接管网络请求：SOCKS5 ${config.host}:${proxyPortOf()}（${describe()}）`)
       }
-      return agentFor(secure, proxyOptions.host, proxyPort)
+      return agentFor(secure, config.host, proxyPortOf())
     }
 
-    lx.pluginNetAgent = provider
+    /**
+     * 应用新配置。
+     * @param {object} patch 新配置（来自设置面板或 DevTools）
+     * @param {boolean} persist 是否写回插件目录的 config.json
+     */
+    const applyConfig = (patch, persist) => {
+      const keyOf = c => `${c.enable}|${c.host}|${c.port}|${c.username}|${c.password}|${c.remoteDns}`
+      const before = keyOf(config)
+      Object.assign(config, patch || {})
+      if (keyOf(config) !== before) dropAgents()
+      if (persist !== false) api.setConfig(readConfig())
+      // 开关打开时确保接管点已挂上；关闭时不摘掉，provider 自己会返回假值
+      if (config.enable && config.host && lx.pluginNetAgent !== provider) lx.pluginNetAgent = provider
+      status = describe()
+      return readConfig()
+    }
 
-    // 方便在 DevTools 控制台查看 / 调整配置，无需重新安装插件
+    /** 建立一次到 TEST_TARGET 的隧道，用于验证地址/端口/账号密码是否正确 */
+    const testConnection = async() => {
+      if (!config.host) {
+        status = '测试失败：请先填写代理地址'
+        return
+      }
+      status = `正在测试 ${config.host}:${proxyPortOf()} …`
+      const started = Date.now()
+      await new Promise(resolve => {
+        socksConnect({
+          proxyHost: config.host,
+          proxyPort: Number(proxyPortOf()),
+          targetHost: TEST_TARGET.host,
+          targetPort: TEST_TARGET.port,
+          username: config.username,
+          password: config.password,
+          remoteDns: config.remoteDns,
+          timeout: config.timeout,
+        }, (err, socket) => {
+          const cost = Date.now() - started
+          if (err) {
+            status = `测试失败（${cost}ms）：${err.message}`
+          } else {
+            status = `连接正常（${cost}ms）：已建立到 ${TEST_TARGET.host}:${TEST_TARGET.port} 的隧道`
+            try { socket.destroy() } catch { /* noop */ }
+          }
+          resolve()
+        })
+      })
+      api.logger.info('SOCKS5 连接测试：', status)
+    }
+
+    applyExternalConfig = applyConfig
+    runConnectionTest = testConnection
+
+    // 启用后立刻接管；未启用时保持 window.lx.pluginNetAgent 原状（默认 null）
+    if (config.enable && config.host) lx.pluginNetAgent = provider
+
+    // ---- 声明式设置面板（宿主统一渲染，配置保存到插件目录 config.json）----
+    if (api.registerSettings) {
+      api.registerSettings({
+        title: 'SOCKS5 代理',
+        fields: [
+          { type: 'switch', key: 'enable', label: '启用 SOCKS5 代理', default: false, tip: '关闭时完全不接管网络请求。' },
+          { type: 'text', key: 'host', label: '代理地址', placeholder: '127.0.0.1', default: '' },
+          { type: 'text', key: 'port', label: '代理端口', placeholder: String(DEFAULT_SOCKS_PORT), default: '' },
+          { type: 'text', key: 'username', label: '账户名', placeholder: '留空表示不需要认证', default: '' },
+          { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要认证', default: '' },
+          {
+            type: 'switch', key: 'remoteDns', label: '远程 DNS（由代理解析域名）', default: true,
+            tip: '建议开启：避免本地 DNS 泄漏，也能解析本地被污染或不可达的域名。',
+          },
+          { type: 'divider' },
+          { type: 'info', text: () => status },
+          { type: 'button', label: '测试连接', action: 'test' },
+        ],
+      })
+    }
+
+    // 方便在 DevTools 控制台查看 / 调整配置
     const g = typeof window !== 'undefined' ? window : global
     g.lxPlugins = g.lxPlugins || {}
     g.lxPlugins.sockProxy = {
-      getConfig: () => Object.assign({}, config),
-      setConfig: (patch) => {
-        Object.assign(config, patch || {})
-        api.setData('config', config)
-        // 配置变了，旧 agent 作废（keepAlive 的连接按旧配置建立）
-        for (const agent of agents.values()) agent.destroy()
-        agents.clear()
-        api.logger.info('配置已更新：', JSON.stringify(config))
-        return Object.assign({}, config)
-      },
-      /** 当前是否已接管（供排查用） */
+      getConfig: readConfig,
+      setConfig: (patch) => applyConfig(patch, true),
       isActive: () => lx.pluginNetAgent === provider,
+      status: () => status,
     }
 
     api.hooks.on('app:ready', () => {
-      api.logger.info(`已就绪：v${api.version}（设置 → 网络 → 网络代理 中填写 SOCKS5 主机/端口即可生效）`)
+      api.logger.info(`已就绪：v${api.version} → ${describe()}`)
+      if (config.enable && !config.host) api.logger.warn('已启用 SOCKS5，但尚未填写代理地址')
     })
+  },
+
+  /** 设置面板改动配置后由宿主调用：立刻应用，无需重启客户端 */
+  onConfigChange(next) {
+    if (applyExternalConfig) applyExternalConfig(next, false)
+    return undefined
+  },
+
+  /** 设置面板上的按钮被点击 */
+  onSettingsAction(action) {
+    if (action === 'test' && runConnectionTest) return runConnectionTest()
+    return undefined
   },
 
   /** 卸载/禁用：撤掉接管点并断开 keepAlive 连接（本插件不 patch 任何原函数，宿主无需回退） */
   uninstall() {
+    applyExternalConfig = null
+    runConnectionTest = null
     const lx = (typeof window !== 'undefined' && window.lx) || null
     if (lx && lx.pluginNetAgent) lx.pluginNetAgent = null
-    console.log('[plugin:sock_proxy] 已卸载，网络代理恢复为客户端原生（HTTP 代理）行为')
+    console.log('[plugin:sock_proxy] 已卸载，网络请求恢复为客户端原生行为（HTTP 代理 / 直连）')
   },
 
   onUpdate(oldVersion) {
-    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新到 v1.0.0`)
+    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新到 v2.0.0（配置仍保留在插件目录）`)
   },
 }

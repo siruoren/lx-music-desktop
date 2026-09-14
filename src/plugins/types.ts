@@ -2,9 +2,9 @@
  * 插件系统 - 公共类型定义
  *
  * 该目录（src/plugins）为新增目录，不与上游任何文件冲突；后续合入 lx-music-desktop
- * 官方更新时，只需把本目录整体带入，并保证 4 个文件里带 `Plugin Manager` 标记的侵入点存在即可：
- *   src/main/index.ts、src/renderer/main.ts、
- *   src/renderer/views/Setting/index.vue、src/renderer/utils/musicSdk/index.js
+ * 官方更新时，只需把本目录整体带入，并保证 5 个文件里带 `Plugin Manager` 标记的侵入点存在即可：
+ *   src/main/index.ts、src/renderer/main.ts、src/renderer/views/Setting/index.vue、
+ *   src/renderer/utils/musicSdk/index.js、src/renderer/utils/request.js
  *
  * 插件分发形态：
  *  - 单文件（推荐）：`.lxplugin`，清单内嵌于文件头的横幅注释，构建产物就是一个文件，
@@ -79,6 +79,51 @@ export interface PluginModule {
   uninstall?: () => void | Promise<void>
   /** 插件被更新后调用，oldVersion 为旧版本号 */
   onUpdate?: (oldVersion: string) => void | Promise<void>
+  /**
+   * 插件配置被修改后调用（宿主写入 config.json 之后触发）。
+   * 用于让插件把新配置真正应用起来（例如重建代理 agent）。
+   */
+  onConfigChange?: (config: Record<string, any>) => void | Promise<void>
+  /** 插件设置面板上的按钮被点击时调用（action 为字段上声明的动作名） */
+  onSettingsAction?: (action: string, config: Record<string, any>) => void | Promise<void>
+}
+
+/**
+ * 插件设置面板中的单个字段（声明式）。
+ * 宿主统一渲染成控件，插件无需自带 Vue 组件 —— 这样插件构建产物依旧是单个文件，
+ * 也避免插件代码进入 webpack 编译链（历史上 .vue 里的 TS 语法会让构建失败）。
+ */
+export interface PluginSettingField {
+  /** 字段类型 */
+  type: 'switch' | 'text' | 'password' | 'number' | 'textarea' | 'info' | 'button' | 'list' | 'divider'
+  /** 配置键（switch / text / password / number / textarea 必填） */
+  key?: string
+  /** 展示名称 */
+  label?: string
+  /** 输入框占位提示 */
+  placeholder?: string
+  /** 控件下方的小字说明 */
+  tip?: string
+  /** 默认值（配置里没有该键时使用） */
+  default?: any
+  /** 是否禁用 */
+  disabled?: boolean
+  /** type=button 时点击触发的动作名（透传给 module.onSettingsAction） */
+  action?: string
+  /** type=info 时的文本；传函数则每次渲染求值，便于显示实时状态 */
+  text?: string | (() => string)
+  /** type=list 时的条目；传函数则每次渲染求值 */
+  items?: () => Array<{ name?: string, desc?: string, status?: string }>
+  /** 控件右侧的附加文字（如「上次更新：…」）；传函数则每次渲染求值 */
+  suffix?: string | (() => string)
+}
+
+/** 插件设置面板描述（由插件在 setup 时通过 api.registerSettings 注册） */
+export interface PluginSettingsSpec {
+  /** 面板标题，默认使用插件名 */
+  title?: string
+  /** 字段列表，按顺序渲染 */
+  fields: PluginSettingField[]
 }
 
 /**
@@ -117,10 +162,19 @@ export interface PluginApi {
   app: any
 }
 
-/** renderer 端独有的插件 API（注册音乐源等 UI/渲染相关能力） */
+/** renderer 端独有的插件 API（注册音乐源、设置面板等 UI/渲染相关能力） */
 export interface RendererPluginApi extends PluginApi {
   /** 注册/覆盖一个音乐源，module 需符合 musicSdk 源模块结构（含 musicSearch/songList 等） */
   registerMusicSource: (id: string, name: string, module: any) => void
   /** 注销音乐源 */
   unregisterMusicSource: (id: string) => void
+  /**
+   * 注册本插件的设置面板，会出现在「设置 → 插件管理」中该插件的「设置」按钮里。
+   * 面板上的字段用声明式描述，由宿主渲染，插件无需自带 Vue 组件。
+   */
+  registerSettings: (spec: PluginSettingsSpec) => void
+  /** 读取本插件配置（保存在插件目录 config.json，启动时自动载入，改完即生效） */
+  getConfig: <T = Record<string, any>>() => T
+  /** 合并写入本插件配置（持久化到插件目录 config.json，并触发 module.onConfigChange） */
+  setConfig: (patch: Record<string, any>) => void
 }

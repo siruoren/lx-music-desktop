@@ -44,6 +44,14 @@ export const PLUGIN_IPC = {
    * 因此由 renderer 侧回传，列表才能显示真实状态（已启用 / 出错）。
    */
   reportState: 'plugin:reportState',
+
+  /**
+   * 读取插件配置（参数 {id}）-> 配置对象。
+   * 配置单独保存在 <插件目录>/config.json，因此必须由主进程读写。
+   */
+  configRead: 'plugin:configRead',
+  /** 合并写入插件配置（参数 {id, patch}）-> 写入后的完整配置 */
+  configWrite: 'plugin:configWrite',
 } as const
 
 /** renderer 宿主上报的加载状态 */

@@ -13,7 +13,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, statSync, cpSync } from 'fs'
 import { basename, join, resolve } from 'path'
 import { createRequire } from 'module'
-import { EnabledState } from './storage'
+import { EnabledState, PluginConfigStore } from './storage'
 import { readManifest, checkCompatibility } from './manifest'
 import { compareVersion } from './semver'
 import { createPluginApi, getPatchRecords, disposeApi } from './host'
@@ -43,6 +43,8 @@ interface ParsedUpload {
 
 export class PluginManager {
   readonly pluginsDir: string
+  /** 各插件的配置存储（<插件目录>/config.json） */
+  readonly config: PluginConfigStore
   private readonly enabled: EnabledState
   private readonly host: HostContext
   private readonly loaded = new Map<string, LoadedPlugin>()
@@ -58,7 +60,18 @@ export class PluginManager {
     this.pluginsDir = pluginsDir
     if (!existsSync(pluginsDir)) mkdirSync(pluginsDir, { recursive: true })
     this.enabled = new EnabledState(pluginsDir)
+    this.config = new PluginConfigStore(pluginsDir)
     this.host = host
+  }
+
+  /** 读取某插件的配置（保存在 <插件目录>/config.json） */
+  getConfig(id: string): Record<string, any> {
+    return this.config.read(id)
+  }
+
+  /** 合并写入某插件配置，返回写入后的完整配置 */
+  setConfig(id: string, patch: Record<string, any>): Record<string, any> {
+    return this.config.patch(id, patch)
   }
 
   // ===================== 扫描 / 列表 =====================
@@ -312,9 +325,11 @@ export class PluginManager {
     const oldVersion = oldManifest.version
     await this.unloadMain(id)
     try {
-      rmSync(target, { recursive: true, force: true })
-      mkdirSync(target, { recursive: true })
-      this.copyDir(fromDir, target)
+      // 保留插件自己的 config.json / data.json
+      this.withPreservedFiles(target, () => {
+        mkdirSync(target, { recursive: true })
+        this.copyDir(fromDir, target)
+      })
     } catch (err) {
       return fail(`更新文件失败：${(err as Error).message}`)
     }
@@ -381,8 +396,10 @@ export class PluginManager {
     const oldVersion = oldManifest.version
     await this.unloadMain(id)
     try {
-      rmSync(target, { recursive: true, force: true })
-      this.writePlugin(target, manifest, code)
+      // 保留插件自己的 config.json / data.json
+      this.withPreservedFiles(target, () => {
+        this.writePlugin(target, manifest, code)
+      })
     } catch (err) {
       return fail(`更新文件失败：${(err as Error).message}`)
     }
@@ -471,11 +488,37 @@ export class PluginManager {
   }
 
   // ===================== 工具 =====================
+  /**
+   * 更新插件会先清空插件目录，但**插件自己的配置与数据必须保留**：
+   *  - config.json：插件设置面板保存的配置（每个插件单独存在自己目录里）
+   *  - data.json：api.getData/setData 持久化的数据
+   * 否则每次更新插件都会丢掉用户配置。
+   */
+  private withPreservedFiles(target: string, fn: () => void): void {
+    const preserved = PRESERVED_FILES
+      .map(name => ({ name, file: join(target, name) }))
+      .filter(item => existsSync(item.file))
+      .map(item => ({ name: item.name, content: readFileSync(item.file, 'utf-8') }))
+
+    rmSync(target, { recursive: true, force: true })
+    fn()
+    for (const item of preserved) {
+      try {
+        writeFileSync(join(target, item.name), item.content, 'utf-8')
+      } catch (err) {
+        console.error(`[plugin] 恢复 ${item.name} 失败（${target}）：`, err)
+      }
+    }
+  }
+
   private copyDir(src: string, dest: string): void {
     mkdirSync(dest, { recursive: true })
     cpSync(src, dest, { recursive: true })
   }
 }
+
+/** 更新插件时需要跨版本保留的文件（相对于插件目录） */
+const PRESERVED_FILES = ['config.json', 'data.json']
 
 function ok(id: string, message: string): PluginOperationResult {
   return { success: true, id, message }

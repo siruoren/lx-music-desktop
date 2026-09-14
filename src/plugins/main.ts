@@ -72,6 +72,10 @@ const host: HostContext = {
   }),
   getData: readData,
   setData: writeData,
+  // 插件配置固定落在 <插件目录>/config.json；manager 在 initPluginManager 中创建，
+  // 这里用闭包延迟取用（调用时必然已初始化）。
+  getConfig: (pluginId: string) => manager!.getConfig(pluginId),
+  setConfig: (pluginId: string, patch: Record<string, any>) => { manager!.setConfig(pluginId, patch) },
 }
 
 /** 在 init() 内调用：初始化插件管理并加载主进程插件（必须先于窗口创建完成同步部分） */
@@ -161,6 +165,14 @@ function registerIpc(): void {
   // renderer 宿主上报加载结果，使列表能如实显示 renderer 端插件的状态
   mainHandle(PLUGIN_IPC.reportState, async({ params }: { params: { id: string, state: PluginRuntimeState, error?: string } }) => {
     m().reportRuntimeState(params.id, params.state, params.error)
+  })
+
+  // 插件配置读写（配置保存在 <插件目录>/config.json，各插件彼此隔离）
+  mainHandle(PLUGIN_IPC.configRead, async({ params }: { params: { id: string } }) => {
+    return m().getConfig(params.id)
+  })
+  mainHandle(PLUGIN_IPC.configWrite, async({ params }: { params: { id: string, patch: Record<string, any> } }) => {
+    return m().setConfig(params.id, params.patch)
   })
 }
 

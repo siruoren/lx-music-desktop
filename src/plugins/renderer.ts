@@ -7,6 +7,10 @@
  *  3. 在 window.lx.plugins 暴露宿主 API（hooks/patch/registerMusicSource/管理/load/unload）。
  *  4. 维护 window.lx.pluginMusicSources（Map），musicSdk 会将其合入音乐源。
  *  5. 暴露 window.lx.musicSdk，便于插件以 api.patch 覆盖原搜索/列表等功能。
+ *  6. 插件配置：实体保存在 <插件目录>/config.json，插件经 api.getConfig/setConfig 读写，
+ *     并可通过 api.registerSettings 声明式注册设置面板（UI 见 ui/PluginSettingsPanel.vue）。
+ *  7. app 自定义源集成：插件导入的远程源脚本经 window.lx.plugins.userApi 落到 app 的
+ *     「自定义源」列表中，且导入后立刻同步界面 store。
  *
  * renderer 侧对源代码的侵入共四处（均带 `Plugin Manager` 标记）：
  *  - src/renderer/main.ts 中调用 initUserPlugins(app)
@@ -16,6 +20,9 @@
  */
 import { ipcRenderer } from 'electron'
 import musicSdk from '@renderer/utils/musicSdk'
+import { userApi } from '@renderer/store'
+import { appSetting, setApiSource } from '@renderer/store/setting'
+import { getUserApiList, importUserApi, removeUserApi } from '@renderer/utils/ipc'
 import { HookBus } from './hookBus'
 import { PatchManager } from './patch'
 import { createPluginApi, getPatchRecords, disposeApi } from './host'
@@ -25,7 +32,7 @@ import type { ModuleRequire } from './loader'
 import { PLUGIN_IPC } from './ipc'
 import { parsePluginFile } from './format'
 import { getAppVersion } from './validate'
-import type { PluginApi, PluginManifest, PluginModule, PluginOperationResult, PluginInfo } from './types'
+import type { PluginApi, PluginManifest, PluginModule, PluginOperationResult, PluginInfo, PluginSettingsSpec } from './types'
 
 let rendererHooks: HookBus
 let rendererPatch: PatchManager
@@ -34,6 +41,18 @@ let rendererHostCtx: HostContext
 const musicSources = new Map<string, { name: string, module: any }>()
 // 已加载的 renderer 插件
 const loadedRenderers = new Map<string, { module: PluginModule, api: PluginApi }>()
+// 各插件注册的设置面板描述
+const pluginSettings = new Map<string, PluginSettingsSpec>()
+/**
+ * 各插件的配置内存副本。
+ * 配置实体保存在 <插件目录>/config.json（由主进程读写），加载插件时一次性取回，
+ * 这样插件的 api.getConfig() 可以保持同步，写入则「先更内存、再异步落盘」。
+ */
+const pluginConfig = new Map<string, Record<string, any>>()
+
+type ConfigChangeListener = (id: string, config: Record<string, any>) => void
+/** 设置面板每次写入配置后通知订阅者（设置面板要刷新显示） */
+const configListeners = new Set<ConfigChangeListener>()
 
 const APP_VERSION = getAppVersion()
 
@@ -84,6 +103,116 @@ function writeData(pluginId: string, key: string, value: any): void {
   } catch (err) {
     console.error(`[plugin] 写入数据失败 ${pluginId}.${key}:`, err)
   }
+}
+
+/* ===================== 插件配置（<插件目录>/config.json） =====================
+ * 配置实体由主进程写在插件自己的目录里（各插件彼此隔离，不污染 app 设置）。
+ * 加载插件时一次性取回放入内存副本，于是 api.getConfig() 可以保持同步；
+ * 写入则是「先更新内存、再异步落盘」，插件与设置面板都能立刻读到新值。
+ */
+
+function getConfigOf(id: string): Record<string, any> {
+  return pluginConfig.get(id) ?? {}
+}
+
+/** 加载插件前调用：从主进程取回该插件的配置 */
+async function fetchConfig(id: string): Promise<Record<string, any>> {
+  try {
+    const cfg = await invoke<Record<string, any>>(PLUGIN_IPC.configRead, { id })
+    const value = cfg && typeof cfg === 'object' ? cfg : {}
+    pluginConfig.set(id, value)
+    return value
+  } catch (err) {
+    console.error(`[plugin] 读取插件配置失败 ${id}:`, err)
+    pluginConfig.set(id, {})
+    return {}
+  }
+}
+
+/** 合并写入插件配置：同步更新内存副本，异步持久化到插件目录 */
+function setConfigOf(id: string, patch: Record<string, any>): Record<string, any> {
+  const next = Object.assign({}, getConfigOf(id), patch ?? {})
+  pluginConfig.set(id, next)
+  void invoke(PLUGIN_IPC.configWrite, { id, patch: next }).catch(err => {
+    console.error(`[plugin] 保存插件配置失败 ${id}:`, err)
+  })
+  for (const listener of configListeners) {
+    try { listener(id, next) } catch (err) { console.error('[plugin] 配置变更通知失败：', err) }
+  }
+  return next
+}
+
+function registerSettings(id: string, spec: PluginSettingsSpec): void {
+  if (!spec || !Array.isArray(spec.fields)) {
+    console.warn(`[plugin] registerSettings 参数不合法，已忽略：${id}`)
+    return
+  }
+  pluginSettings.set(id, spec)
+}
+
+/** 读取配置并补齐面板字段声明的默认值（只影响返回值，不写回文件） */
+function withDefaults(id: string): Record<string, any> {
+  const spec = pluginSettings.get(id)
+  const result: Record<string, any> = Object.assign({}, getConfigOf(id))
+  if (!spec) return result
+  for (const field of spec.fields) {
+    if (!field.key) continue
+    if (result[field.key] === undefined && field.default !== undefined) result[field.key] = field.default
+  }
+  return result
+}
+
+/** 配置写入后通知插件本身，让新配置立即生效（无需重启客户端） */
+async function notifyConfigChange(id: string, config: Record<string, any>): Promise<void> {
+  const rec = loadedRenderers.get(id)
+  if (!rec?.module.onConfigChange) return
+  try {
+    await rec.module.onConfigChange(config)
+  } catch (err) {
+    console.error(`[plugin] onConfigChange 执行失败 ${id}:`, err)
+  }
+}
+
+/* ===================== app「自定义源」集成 =====================
+ * 插件批量导入的远程自定义源脚本要出现在 app 的「设置 → 基本设置 → 自定义源」列表中，
+ * 因此这里把 app 自身的自定义源能力（导入 / 移除 / 列表 / 当前选中项）暴露给插件，
+ * 并在每次变更后同步 renderer 的 userApi store，让界面立即反映出来。
+ */
+const userApiBridge = {
+  /** 当前已导入的自定义源列表（同步读 store） */
+  list: (): any[] => userApi.list,
+  /** 从主进程重新拉取列表并刷新界面 */
+  refresh: async(): Promise<any[]> => {
+    const list = await getUserApiList()
+    userApi.list = list
+    return list
+  },
+  /**
+   * 导入一个自定义源脚本（与 app 的「在线导入自定义源」同一接口）。
+   * 注意：该接口每次都生成新的源 id，无法原地覆盖；
+   * 因此“更新某个源”需要先 remove 再 import。
+   */
+  importScript: async(script: string): Promise<{ success: boolean, apiInfo?: any, message?: string }> => {
+    try {
+      const res = await importUserApi(script)
+      userApi.list = res.apiList
+      return { success: true, apiInfo: res.apiInfo }
+    } catch (err) {
+      return { success: false, message: (err as Error).message }
+    }
+  },
+  /** 移除若干自定义源，返回移除后的列表 */
+  remove: async(ids: string[]): Promise<any[]> => {
+    const list = await removeUserApi(ids)
+    userApi.list = list
+    return list
+  },
+  /** 当前选中的自定义源 id（app 设置项 common.apiSource） */
+  getActiveId: (): string => appSetting['common.apiSource'],
+  /** 选中某个自定义源，等价于用户在「自定义源」列表里勾选 */
+  setActiveId: (id: string): void => {
+    setApiSource(id)
+  },
 }
 
 function registerMusicSource(id: string, name: string, module: any): void {
@@ -140,6 +269,9 @@ export async function loadRendererPlugin(id: string): Promise<void> {
   }
 
   try {
+    // 先把该插件的配置（<插件目录>/config.json）取回内存，
+    // 这样插件在 setup 里就能同步读到自己的配置，改完配置下次启动也依然生效。
+    await fetchConfig(id)
     const module = evaluatePluginModule({ code, filename: info.main, require: makeRequire() })
     const api = createPluginApi(rendererHostCtx, id, info.version, '') as PluginApi
     if (module.setup) await module.setup(api)
@@ -166,6 +298,9 @@ export async function unloadRendererPlugin(id: string): Promise<void> {
     loadedRenderers.delete(id)
     rendererHooks.emit('plugin:unloaded', { id })
   }
+  // 插件已卸载：设置面板与内存中的配置一并清掉（配置文件仍留在插件目录里）
+  pluginSettings.delete(id)
+  pluginConfig.delete(id)
   reportRuntimeState(id, 'unloaded')
 }
 
@@ -191,6 +326,9 @@ export async function initUserPlugins(_app?: any): Promise<void> {
     setData: writeData,
     registerMusicSource,
     unregisterMusicSource,
+    getConfig: getConfigOf,
+    setConfig: setConfigOf,
+    registerSettings,
   }
 
   // 暴露给源码扩展点与插件
@@ -231,6 +369,42 @@ export async function initUserPlugins(_app?: any): Promise<void> {
   hostApi.load = async(id: string) => loadRendererPlugin(id)
   hostApi.unload = async(id: string) => unloadRendererPlugin(id)
   hostApi.isLoaded = (id: string) => isRendererPluginLoaded(id)
+
+  // ---- 插件设置面板：面板描述 + 配置读写（配置保存在插件目录 config.json）----
+  // 面板由宿主统一渲染，插件只需声明字段，因此插件产物仍是单个文件。
+  hostApi.settings = {
+    /** 某插件注册的设置面板描述；未注册或插件未加载时为 null */
+    get: (id: string): PluginSettingsSpec | null => pluginSettings.get(id) ?? null,
+    /** 是否已注册设置面板（UI 据此决定要不要显示「设置」按钮） */
+    has: (id: string): boolean => pluginSettings.has(id),
+    /** 读取配置（补齐字段 default） */
+    getConfig: (id: string): Record<string, any> => withDefaults(id),
+    /** 合并写入配置并通知插件立即生效 */
+    setConfig: (id: string, patch: Record<string, any>): Record<string, any> => {
+      const next = setConfigOf(id, patch)
+      void notifyConfigChange(id, next)
+      return next
+    },
+    /** 点击面板上的按钮 */
+    runAction: async(id: string, action: string): Promise<void> => {
+      const rec = loadedRenderers.get(id)
+      if (!rec?.module.onSettingsAction) return
+      try {
+        await rec.module.onSettingsAction(action, getConfigOf(id))
+      } catch (err) {
+        console.error(`[plugin] 设置动作执行失败 ${id}.${action}:`, err)
+      }
+    },
+    /** 订阅配置变化（设置面板据此刷新显示）；返回取消订阅函数 */
+    subscribe: (listener: ConfigChangeListener): (() => void) => {
+      configListeners.add(listener)
+      return () => { configListeners.delete(listener) }
+    },
+  }
+
+  // ---- app 自定义源集成：插件导入的源会出现在 app 的「自定义源」列表里 ----
+  hostApi.userApi = userApiBridge
+
   ;(window as any).lx.plugins = hostApi
 
   // 加载所有已启用的 renderer 端插件
