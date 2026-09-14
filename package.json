@@ -56,6 +56,7 @@
     "publish:linux:pacman": "node build-config/build-pack.js target=linux arch=x64 type=pacman publish=always",
     "dev": "cross-env NODE_OPTIONS=--max-http-header-size=200000 node build-config/runner-dev.js",
     "build:theme": "node src/common/theme/createThemes.js",
+    "build:plugin": "node lx-plugins/repo-source-plugins/build.js",
     "build": "node build-config/pack.js",
     "build:main": "cross-env NODE_ENV=production webpack --config build-config/main/webpack.config.prod.js --progress",
     "build:renderer": "cross-env NODE_ENV=production webpack --config build-config/renderer/webpack.config.prod.js --progress",

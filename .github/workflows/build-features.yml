@@ -3,7 +3,7 @@ name: Run build test
 on:
   pull_request:
     branches:
-      - dev
+      - features
 
 jobs:
   test:

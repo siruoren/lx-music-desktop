@@ -1,0 +1,10 @@
+{
+  "id": "repo-source-plugins",
+  "name": "repo-source-plugins",
+  "version": "1.0.0",
+  "description": "repo-source-plugins：lx-plugins 插件项目下的插件，为音乐搜索提供跨源结果去重与统计增强，并可通过 api.registerMusicSource 扩展自定义音乐源。",
+  "main": "index.js",
+  "platforms": [
+    "renderer"
+  ]
+}

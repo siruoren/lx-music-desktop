@@ -48,12 +48,38 @@ const sources = {
   bd,
   xm,
 }
+
+// === Plugin Manager === 插件注册的音乐源在「调用时」合并，因此与插件加载顺序无关
+const getPluginMusicSources = () => {
+  const map = typeof window != 'undefined' && window.lx ? window.lx.pluginMusicSources : null
+  return map && typeof map.get == 'function' ? map : null
+}
+/** 内置音乐源 + 插件注册的音乐源 */
+const getActiveSources = () => {
+  const list = [...sources.sources]
+  const map = getPluginMusicSources()
+  if (map) {
+    for (const [id, item] of map) {
+      if (list.some(s => s.id == id)) continue
+      list.push({ id, name: item.name })
+    }
+  }
+  return list
+}
+/** 按 id 取音乐源模块（内置优先，其次插件注册的） */
+const getSourceModule = id => {
+  if (sources[id]) return sources[id]
+  const map = getPluginMusicSources()
+  const item = map ? map.get(id) : null
+  return (item && item.module) || null
+}
+
 export default {
   ...sources,
   init() {
     const tasks = []
-    for (let source of sources.sources) {
-      let sm = sources[source.id]
+    for (let source of getActiveSources()) {
+      let sm = getSourceModule(source.id)
       sm && sm.init && tasks.push(sm.init())
     }
     return Promise.all(tasks)
@@ -65,9 +91,10 @@ export default {
     const musicName = trimStr(name)
     const tasks = []
     const excludeSource = ['xm']
-    for (const source of sources.sources) {
-      if (!sources[source.id].musicSearch || source.id == s || excludeSource.includes(source.id)) continue
-      tasks.push(sources[source.id].musicSearch.search(`${musicName} ${singer || ''}`.trim(), 1, limit).catch(_ => null))
+    for (const source of getActiveSources()) {
+      const sm = getSourceModule(source.id)
+      if (!sm || !sm.musicSearch || source.id == s || excludeSource.includes(source.id)) continue
+      tasks.push(sm.musicSearch.search(`${musicName} ${singer || ''}`.trim(), 1, limit).catch(_ => null))
     }
     return (await Promise.all(tasks)).filter(s => s)
   },
