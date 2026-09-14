@@ -74,3 +74,5 @@ src/**/*-internal.js
 
 # workbuddy 工具目录（工作记忆等）
 **/.workbuddy/**
+**/.DS_Store
+**/.vscode

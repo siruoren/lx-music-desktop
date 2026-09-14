@@ -92,3 +92,19 @@ node lx-plugins/repo-source-plugins/build.js <项目名> --out /tmp/out  # 指�
 ```bash
 grep -rnF '=== Plugin Manager ===' src
 ```
+
+## CI 与发布
+
+| 工作流 | 触发 | 作用 |
+| --- | --- | --- |
+| `.github/workflows/plugin-build.yml` | `lx-plugins/**`、`src/plugins/**` 变更（push / PR）、手动触发 | 只构建插件，产物上传为 Actions Artifact（轻量，零依赖，用于快速反馈） |
+| `.github/workflows/beta-pack.yml` | 推送 `beta` 分支 | 构建各平台安装包 **+ 插件**，全部成功后在 `Release` 任务里**自动创建 GitHub Pre-release**，把安装包与 `.lxplugin` 一起上传为预发布附件 |
+
+Pre-release 的命名规则：
+
+- **tag**：`v<package.json 版本>-beta.<工作流运行号>`，例如 `v2.12.5-beta.42`
+- **标题**：`Beta v2.12.5 (build 42)`
+- 标记为 **Pre-release**（`prerelease: true`，`draft: false`），因此不会占用「Latest」位置
+- 预发布正文会附带自动生成的更新说明（`generate_release_notes`）
+
+> 插件构建脚本零依赖，所以 `Plugins` 任务只做 `checkout` + `node` + 跑脚本，不执行 `npm ci`。
