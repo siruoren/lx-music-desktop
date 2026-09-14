@@ -1,6 +1,8 @@
 name: Build Plugins
 
 # 只负责插件构建：把 lx-plugins/ 下的插件项目构建成单个 .lxplugin 文件并上传为产物。
+# 每个插件单独构建、单独上传为自己名下的一个 Artifact（可只下载某一个插件，不再打成一个包）。
+# 插件列表动态发现，新增插件项目无需修改本文件。
 # 构建脚本零依赖（不需要 npm install），因此这个工作流非常轻量。
 on:
   push:
@@ -18,10 +20,14 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # 发现 lx-plugins/ 下的插件项目，供下面的矩阵构建使用。
+  PluginMeta:
+    name: Plugin Meta
     runs-on: ubuntu-latest
+    outputs:
+      plugins: ${{ steps.plugins.outputs.plugins }}
     steps:
-      - name: Checkout
+      - name: Check out git repository
         uses: actions/checkout@v6
 
       - name: Setup Node.js
@@ -29,16 +35,50 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Build plugins
-        run: node lx-plugins/repo-source-plugins/build.js
+      - name: Discover plugin projects
+        id: plugins
+        run: |
+          LIST=$(node -e "
+            const fs = require('fs'), path = require('path');
+            const root = 'lx-plugins';
+            const names = fs.readdirSync(root, { withFileTypes: true })
+              .filter(e => e.isDirectory() && fs.existsSync(path.join(root, e.name, 'plugin.json')))
+              .map(e => e.name)
+              .sort();
+            if (!names.length) { console.error('lx-plugins 下没有发现任何插件项目'); process.exit(1); }
+            process.stdout.write(JSON.stringify(names));
+          ")
+          echo "plugins=$LIST" >> "$GITHUB_OUTPUT"
+          echo "发现插件项目：$LIST"
 
-      - name: List artifacts
-        run: ls -lh lx-plugins/*/dist/
+  # 每个插件单独构建、单独上传为一个 Artifact（可只下载某一个插件）。
+  Build:
+    name: Build / ${{ matrix.plugin }}
+    needs: PluginMeta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.PluginMeta.outputs.plugins) }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
 
-      - name: Upload artifacts
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Build plugin ${{ matrix.plugin }}
+        run: node lx-plugins/repo-source-plugins/build.js ${{ matrix.plugin }}
+
+      - name: Show artifact size
+        run: ls -lh lx-plugins/${{ matrix.plugin }}/dist/
+
+      - name: Upload artifact ${{ matrix.plugin }}
         uses: actions/upload-artifact@v7
         with:
-          name: lx-plugins
-          path: lx-plugins/*/dist/*.lxplugin
+          name: lx-plugin-${{ matrix.plugin }}
+          path: lx-plugins/${{ matrix.plugin }}/dist/${{ matrix.plugin }}.lxplugin
           if-no-files-found: error
           retention-days: 30

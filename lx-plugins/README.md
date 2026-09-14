@@ -118,14 +118,21 @@ grep -rnF '=== Plugin Manager ===' src
 
 | 工作流 | 触发 | 作用 |
 | --- | --- | --- |
-| `.github/workflows/plugin-build.yml` | `lx-plugins/**`、`src/plugins/**` 变更（push / PR）、手动触发 | 只构建插件，产物上传为 Actions Artifact（轻量，零依赖，用于快速反馈） |
-| `.github/workflows/beta-pack.yml` | 推送 `beta` 分支 | 构建各平台安装包 **+ 插件**，全部成功后在 `Release` 任务里**自动创建 GitHub Pre-release**，把安装包与 `.lxplugin` 一起上传为预发布附件 |
+| `.github/workflows/plugin-build.yml` | `lx-plugins/**`、`src/plugins/**` 变更（push / PR）、手动触发 | 只构建插件，**每个插件单独构建、单独上传为一个 Actions Artifact**（名为 `lx-plugin-<插件名>`，可只下载某一个插件；轻量，零依赖，用于快速反馈） |
+| `.github/workflows/beta-pack.yml` | 推送 `beta` 分支 | 构建各平台安装包 **+ 插件**，全部成功后在 `Release` 任务里**自动创建 GitHub Pre-release**，把安装包与 `.lxplugin` **逐个上传为相互独立的附件** |
+
+插件在发布链路里的处理方式：
+
+- **插件列表自动发现**：`PluginMeta` 任务扫描 `lx-plugins/*/plugin.json` 得到插件清单，供矩阵构建与发布说明使用；新增插件项目**不需要改任何工作流文件**。
+- **一个插件一个构建任务**：`Plugins` 矩阵按插件并行构建，每个插件产出自己名下的 Artifact（`lx-plugin-<插件名>`），其中一个插件构建失败不影响其它插件（`fail-fast: false`）。
+- **每个插件都是独立附件**：`Release` 任务下载产物时不再合并成一个目录（`merge-multiple: false`），上传规则按前缀区分，因此**每个插件在 Pre-release 里都是单独一个 `.lxplugin` 附件**，可单独下载某一个插件；安装包同理各自独立。
+- **插件不做独立 Release**：插件统一随 app 的 Pre-release 发布，不为插件单独建 Release/tag。需要发新版插件时，改该插件 `plugin.json` 里的 `version`，再推 `beta` 分支即可（每次 beta 推送都会生成新的 Pre-release，附件随之重新上传）。
 
 Pre-release 的命名规则：
 
 - **tag**：`v<package.json 版本>-beta.<工作流运行号>`，例如 `v2.12.5-beta.42`
 - **标题**：`Beta v2.12.5 (build 42)`
 - 标记为 **Pre-release**（`prerelease: true`，`draft: false`），因此不会占用「Latest」位置
-- 预发布正文会附带自动生成的更新说明（`generate_release_notes`）
+- 预发布正文会附带自动生成的更新说明（`generate_release_notes`），并单列一节「插件（每个插件单独一个附件）」，逐行给出插件名、`plugin.json` 里的版本与说明
 
 > 插件构建脚本零依赖，所以 `Plugins` 任务只做 `checkout` + `node` + 跑脚本，不执行 `npm ci`。

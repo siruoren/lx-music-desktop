@@ -52,7 +52,8 @@
           <span :class="$style.label">{{ field.label }}</span>
           <textarea
             :class="$style.textarea" :value="valueOf(field)" :placeholder="field.placeholder || ''"
-            :disabled="busy || field.disabled" @change="setValue(field, $event.target.value)"
+            :disabled="busy || field.disabled"
+            @input="onInput(field, $event.target.value)" @change="onChange(field, $event.target.value)"
           ></textarea>
           <span v-if="suffixOf(field)" :class="$style.suffix">{{ suffixOf(field) }}</span>
           <span v-if="field.tip" :class="$style.tip">{{ field.tip }}</span>
@@ -63,7 +64,7 @@
           <input
             :class="$style.input" :type="inputType(field)" :value="valueOf(field)"
             :placeholder="field.placeholder || ''" :disabled="busy || field.disabled"
-            @change="setValue(field, $event.target.value)"
+            @input="onInput(field, $event.target.value)" @change="onChange(field, $event.target.value)"
           />
           <span v-if="suffixOf(field)" :class="$style.suffix">{{ suffixOf(field) }}</span>
           <span v-if="field.tip" :class="$style.tip">{{ field.tip }}</span>
@@ -75,6 +76,9 @@
 
 <script>
 import { ref, onMounted, onBeforeUnmount } from '@common/utils/vueTools'
+
+/** 文本类字段停止输入多久后自动落盘（失焦时会立即落盘，不依赖这个延迟） */
+const INPUT_COMMIT_DELAY = 500
 
 /**
  * 插件设置面板（宿主通用组件）。
@@ -100,8 +104,20 @@ export default {
     const busy = ref(false)
     // 自增计数：函数型字段需要重新求值时用它触发重渲染
     const tick = ref(0)
+    /**
+     * 正在编辑的字段草稿（key → 输入框里的实时内容）。
+     *
+     * 为什么必须有它：输入框用 `:value` 单向绑定，而 Vue 的 patchElement 把 `value`
+     * 排除在 `next !== prev` 判断之外，每次重渲染都会重新补一次 value，
+     * patchDOMProp 再拿「DOM 当前值」和「vnode 里的值」比较，不一致就写回 vnode 的值。
+     * 本面板有个 1 秒轮询会持续触发重渲染，于是「刚敲进去、还没提交」的内容
+     * 会被回滚成宿主里的旧值 —— 表现就是输入后自动被清空。
+     * 所以编辑期间以草稿为准渲染，轮询与宿主推送都不会覆盖它。
+     */
+    const draft = ref({})
     let timer = null
     let offConfig = null
+    let commitTimer = null
 
     const getSettingsApi = () => window.lx?.plugins?.settings || null
 
@@ -139,7 +155,11 @@ export default {
     }
     const valueOf = field => {
       void tick.value
-      return field.key ? values.value[field.key] : ''
+      if (!field.key) return ''
+      // 编辑中的字段优先用草稿渲染，避免被「轮询重渲染」或「宿主推送」回滚
+      if (field.key in draft.value) return draft.value[field.key]
+      const value = values.value[field.key]
+      return value == null ? '' : value
     }
 
     const inputType = field => {
@@ -148,11 +168,10 @@ export default {
       return 'text'
     }
 
-    const setValue = (field, value) => {
+    /** 合并写入宿主配置（写到哪里由宿主决定：插件目录的 config.json） */
+    const writeConfig = patch => {
       const api = getSettingsApi()
-      if (!api || !field.key) return
-      const patch = {}
-      patch[field.key] = value
+      if (!api) return
       try {
         const next = api.setConfig(props.pluginId, patch)
         values.value = next || api.getConfig(props.pluginId) || {}
@@ -162,9 +181,67 @@ export default {
       tick.value++
     }
 
+    /** 开关等「一改即生效」的字段：改动立刻落盘 */
+    const setValue = (field, value) => {
+      if (!field.key) return
+      const patch = {}
+      patch[field.key] = value
+      writeConfig(patch)
+    }
+
+    const clearCommitTimer = () => {
+      if (commitTimer) {
+        clearTimeout(commitTimer)
+        commitTimer = null
+      }
+    }
+
+    /**
+     * 文本类字段「输入中」：只更新本地草稿，并防抖落盘。
+     * 之所以不每个字符都写一次宿主：既避免频繁写 config.json，也避免触发插件的
+     * onConfigChange 反复重跑逻辑。真正的显示以草稿为准，所以不会丢字。
+     */
+    const onInput = (field, value) => {
+      if (!field.key) return
+      draft.value = Object.assign({}, draft.value, { [field.key]: value })
+      clearCommitTimer()
+      commitTimer = setTimeout(() => {
+        commitTimer = null
+        if (!(field.key in draft.value)) return
+        const patch = {}
+        patch[field.key] = draft.value[field.key]
+        writeConfig(patch)
+      }, INPUT_COMMIT_DELAY)
+    }
+
+    /** 失焦 / 回车：立即落盘，并清掉草稿（此后重新以宿主配置为准） */
+    const onChange = (field, value) => {
+      if (!field.key) return
+      clearCommitTimer()
+      const patch = {}
+      patch[field.key] = value
+      writeConfig(patch)
+      const next = Object.assign({}, draft.value)
+      delete next[field.key]
+      draft.value = next
+    }
+
+    /** 把尚未落盘的草稿一次性冲刷（点动作按钮前、面板卸载前调用，避免丢用户输入） */
+    const flushDrafts = () => {
+      clearCommitTimer()
+      const keys = Object.keys(draft.value)
+      if (!keys.length) return
+      const patch = {}
+      for (const key of keys) patch[key] = draft.value[key]
+      draft.value = {}
+      writeConfig(patch)
+    }
+
     const runAction = async field => {
       const api = getSettingsApi()
       if (!api || !field.action) return
+      // 先冲刷未落盘的编辑：否则点「立即导入 / 更新」时用的还是旧地址
+      flushDrafts()
       busy.value = true
       try {
         await api.runAction(props.pluginId, field.action)
@@ -191,6 +268,8 @@ export default {
     })
 
     onBeforeUnmount(() => {
+      // 卸载（收起面板 / 切换插件）前把编辑中的值落盘，避免用户输入白打一遍
+      flushDrafts()
       if (timer) clearInterval(timer)
       if (offConfig) offConfig()
     })
@@ -205,6 +284,8 @@ export default {
       valueOf,
       inputType,
       setValue,
+      onInput,
+      onChange,
       runAction,
     }
   },
