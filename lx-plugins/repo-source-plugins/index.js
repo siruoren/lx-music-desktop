@@ -275,10 +275,24 @@ module.exports = {
             const version = readScriptInfo(script, 'version')
             const local = nameMap.get(name)
 
-            // 内容与上次一致、且本地同名条目就是上次导入的那个 → 无需动它
-            //（id 不变，用户的勾选等状态原样保留）
+            // 内容与上次一致、且本地同名条目就是上次导入的那个 → 无需重新导入
+            //（id 不变，用户的勾选等状态原样保留）；但若本地还有同名的其他条目
+            //（如用户手动导入过的重复项），顺手清掉，只保留本插件导入的那一个。
             if (local && prev && prev.apiId === local.id && prev.hash === hash) {
               kept++
+              const dupIds = []
+              for (const item of (userApi.list() || [])) {
+                if (item && item.id && item.name === name && item.id !== prev.apiId) dupIds.push(item.id)
+              }
+              if (dupIds.length) {
+                const activeOnDup = dupIds.includes(userApi.getActiveId())
+                try {
+                  await userApi.remove(dupIds)
+                  if (activeOnDup) userApi.setActiveId(prev.apiId)
+                } catch (err) {
+                  api.logger.warn(`清理同名重复源失败（${name}）：`, err)
+                }
+              }
               next.push(prev)
               lines.push(`未变化，跳过：${name}${version ? ` v${version}` : ''}`)
               continue
