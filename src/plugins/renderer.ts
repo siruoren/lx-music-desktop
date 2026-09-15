@@ -23,6 +23,12 @@ import musicSdk from '@renderer/utils/musicSdk'
 import { userApi } from '@renderer/store'
 import { appSetting, setApiSource } from '@renderer/store/setting'
 import { getUserApiList, importUserApi, removeUserApi } from '@renderer/utils/ipc'
+// === Plugin Manager === 收藏数据桥：让插件能读取/写回「我的列表」（收藏）
+import { getListMusics, overwriteListFull } from '@renderer/store/list/action'
+import { defaultList, loveList, userLists } from '@renderer/store/list/state'
+import { fixNewMusicInfoQuality, filterMusicList } from '@renderer/utils'
+import { toRaw } from '@common/utils/vueTools'
+import { LIST_IDS } from '@common/constants'
 import { HookBus } from './hookBus'
 import { PatchManager } from './patch'
 import { createPluginApi, getPatchRecords, disposeApi } from './host'
@@ -215,6 +221,72 @@ const userApiBridge = {
   },
 }
 
+/* ===================== 收藏（我的列表）数据桥 =====================
+ * 让插件能读取/写回客户端的「我的列表」（试听列表 + 我的收藏 + 创建的歌单）。
+ * 渲染端收藏数据存于 SQLite（lx.data.db），且读写必须经由 store action；
+ * 这些 action 不在 window.lx 上暴露，故在此集中桥接，供 sync-favorites 等插件调用。
+ * 导出格式与设置「备份/还原」一致：[{ ...list, list }, ...]。
+ * scope 控制同步范围（可选类别：default=试听列表 / love=我的收藏 / user=我的列表(歌单)），
+ * 不传则三类全同步；importAll 会保留未选中类别的现有内容，不会误清空。
+ */
+function scopeIncludes(scope: any, category: 'default' | 'love' | 'user'): boolean {
+  if (scope == null) return true
+  if (typeof scope === 'string') {
+    const s = String(scope).trim()
+    if (s === '' || s === 'all') return true
+    const parts = s.split(',').map(x => x.trim())
+    return parts.includes(category)
+  }
+  if (typeof scope === 'object') return scope[category] !== false
+  return true
+}
+
+const listDataBridge = {
+  /** 读取当前列表（按 scope 过滤；默认 default/love/user 全部）及其歌曲 */
+  exportAll: async(scope?: any): Promise<any[]> => {
+    const lists: any[] = []
+    if (scopeIncludes(scope, 'default')) {
+      lists.push({ ...toRaw(defaultList), list: toRaw(await getListMusics(defaultList.id)) })
+    }
+    if (scopeIncludes(scope, 'love')) {
+      lists.push({ ...toRaw(loveList), list: toRaw(await getListMusics(loveList.id)) })
+    }
+    if (scopeIncludes(scope, 'user')) {
+      for (const list of userLists) {
+        lists.push({ ...toRaw(list), list: toRaw(await getListMusics(list.id)) })
+      }
+    }
+    return lists
+  },
+  /** 写回列表：按 id 匹配覆盖、本地不存在则新增（与导入 v2 备份同语义）。
+   *  scope 未包含的类别会读回当前内容保持原样，避免 overwriteListFull 整体覆盖时误清空。 */
+  importAll: async(lists: any[], scope?: any): Promise<void> => {
+    if (!Array.isArray(lists)) throw new Error('收藏数据格式错误')
+    const wantDefault = scopeIncludes(scope, 'default')
+    const wantLove = scopeIncludes(scope, 'love')
+    const wantUser = scopeIncludes(scope, 'user')
+    const defaultEl = lists.find(l => l.id === LIST_IDS.DEFAULT)
+    const loveEl = lists.find(l => l.id === LIST_IDS.LOVE)
+    const others = lists.filter(l => l.id !== LIST_IDS.DEFAULT && l.id !== LIST_IDS.LOVE)
+    const toRawArr = (arr: any) => (Array.isArray(arr) ? toRaw(arr) : [])
+    const mapList = (arr: any[] | undefined) => filterMusicList(toRawArr(arr)).map(m => fixNewMusicInfoQuality(m))
+    // 未选中的类别：读回当前内容（overwriteListFull 会整体覆盖三类，必须回填以保持原样）
+    const keepDefault = wantDefault ? [] : toRaw(await getListMusics(defaultList.id))
+    const keepLove = wantLove ? [] : toRaw(await getListMusics(loveList.id))
+    const keepUser = wantUser ? [] : toRaw(userLists).map(l => {
+      const raw = toRaw(l)
+      return { ...raw, list: toRaw(await getListMusics(raw.id)) }
+    })
+    await overwriteListFull({
+      defaultList: mapList(wantDefault ? (defaultEl && defaultEl.list) : keepDefault),
+      loveList: mapList(wantLove ? (loveEl && loveEl.list) : keepLove),
+      userList: wantUser
+        ? others.map(l => ({ ...l, list: mapList(l.list) }))
+        : keepUser,
+    })
+  },
+}
+
 function registerMusicSource(id: string, name: string, module: any): void {
   if (!id || typeof id !== 'string') throw new Error('registerMusicSource: id 必须是非空字符串')
   if (Object.prototype.hasOwnProperty.call(musicSdk, id)) {
@@ -404,6 +476,9 @@ export async function initUserPlugins(_app?: any): Promise<void> {
 
   // ---- app 自定义源集成：插件导入的源会出现在 app 的「自定义源」列表里 ----
   hostApi.userApi = userApiBridge
+
+  // ---- 收藏（我的列表）数据桥：供 sync-favorites 等插件备份/还原收藏 ----
+  hostApi.listData = listDataBridge
 
   ;(window as any).lx.plugins = hostApi
 

@@ -1,0 +1,11 @@
+{
+  "id": "com.siruoren.sync-favorites",
+  "name": "收藏同步",
+  "description": "通过 WebDAV 或 FTP 定时同步/备份/还原「我的列表」（收藏），支持 AES-256 加密与远程还原。",
+  "author": "siruoren",
+  "homepage": "",
+  "platforms": ["renderer"],
+  "engines": {
+    "app": ">=2.0.0"
+  }
+}
