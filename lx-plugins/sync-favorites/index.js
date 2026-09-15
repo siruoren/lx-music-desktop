@@ -269,6 +269,10 @@ function makeRequest(urlStr, options) {
     }
     const mod = url.protocol === 'https:' ? https : http
     const headers = Object.assign({}, options.headers)
+    // 部分 WebDAV 服务（如群晖）会拒绝无 User-Agent 的请求，统一带上
+    if (!headers['User-Agent'] && !headers['user-agent']) {
+      headers['User-Agent'] = 'lx-music-sync/2.12.5'
+    }
     if (options.auth && options.auth.user !== undefined) {
       headers['Authorization'] = 'Basic ' + Buffer.from(options.auth.user + ':' + options.auth.pass).toString('base64')
     }
@@ -315,15 +319,24 @@ function parentDirUrls(fileUrl) {
   return urls
 }
 
-/** 逐级 MKCOL 创建远端父目录；返回创建过程中出现的「非预期」错误（已存在/可接受的状态不计入），
- *  避免目录没建出来却被静默吞掉、导致后续 PUT 莫名失败。 */
+/** 逐级 MKCOL 创建远端父目录；返回创建过程中出现的「非预期」错误。
+ *  注意：群晖等 WebDAV 对「不存在的路径」返回 405/409，与「已存在」的语义相同状态码，
+ *  故这里对 405/409 用 PROPFIND 二次确认是否真已存在，避免把「创建失败」误判为「已存在」后继续 PUT 到空目录。 */
 async function ensureParentDirs(fileUrl, auth, insecure, timeout) {
   const errors = []
+  const davOpts = (method, extra) => Object.assign({
+    method, auth, secure: insecure ? false : undefined, timeout,
+  }, extra || {})
   for (const dirUrl of parentDirUrls(fileUrl)) {
     try {
-      const res = await makeRequest(dirUrl, { method: 'MKCOL', auth, secure: insecure ? false : undefined, timeout })
-      // 201 创建 / 204 / 301·302 重定向 / 405 已存在 / 409 冲突(已存在) / 207 多状态 → 视为可接受
-      if (![201, 204, 301, 302, 405, 409, 207].includes(res.status)) {
+      const res = await makeRequest(dirUrl, davOpts('MKCOL'))
+      if ([201, 204, 207].includes(res.status) || (res.status >= 300 && res.status < 400)) continue // 创建成功 / 重定向
+      if ([405, 409].includes(res.status)) {
+        // 405/409：可能已存在，用 PROPFIND 验证
+        const ex = await makeRequest(dirUrl, davOpts('PROPFIND', { headers: { Depth: '0' } }))
+        if (ex.status >= 200 && ex.status < 300) continue // 确实已存在
+        errors.push(`${dirUrl} → 目录不存在且无法创建（HTTP ${res.status}）`)
+      } else {
         errors.push(`${dirUrl} → HTTP ${res.status}`)
       }
     } catch (e) {
@@ -352,8 +365,8 @@ function createWebDavClient(cfg) {
       })
       if (res.status >= 400) {
         const extra = res.status === 405
-          ? '（服务器不允许 PUT：该路径可能未启用 WebDAV 写权限，或 host 未指向 WebDAV 挂载点/需追加子路径，如 Nextcloud 用 /remote.php/dav/files/用户名/）'
-          : ''
+          ? '（服务器不允许 PUT：群晖等 WebDAV 要求「远端目录」以已存在的共享名开头，例如 homes/你的目录、photo/你的目录；请先点「浏览目录」查看可用共享，再把远端目录改成「共享名/子目录」形式；若该路径需要登录，请确认账号密码已填写）'
+          : (res.status === 404 ? '（路径不存在，请先用「浏览目录」确认远端目录正确，且父目录已存在）' : '')
         throw new Error('WebDAV 上传失败：HTTP ' + res.status + extra)
       }
       return res
@@ -1154,37 +1167,57 @@ function formatListing(entries, label, note) {
   return `「${label}」${note ? '\n' + note : ''}\n${body}`
 }
 
-/** 浏览远端目录：列出连接地址/远端目录下的内容，返回可读文本；列不出时给出可操作诊断 */
+/** 从「某个远端目录 URL」逐级向上收集候选 URL（最深的在前，根 / 在最后兜底）。
+ *  例：http://h:5505/lx-music/favorites/ →
+ *      [http://h:5505/lx-music/favorites/, http://h:5505/lx-music/, http://h:5505/]
+ *  这样当配置的远端目录不存在时，能一路回退到 WebDAV 根，列出真实共享（群晖的共享就挂在根下）。 */
+function collectAncestorUrls(dir) {
+  if (!/^https?:\/\//i.test(dir)) return [dir] // SMB 等相对路径不在此回退
+  const u = new URL(dir)
+  const segs = u.pathname.split('/').filter(Boolean)
+  const chain = []
+  let acc = u.origin
+  for (const s of segs) {
+    acc += '/' + s
+    chain.push(acc + '/')
+  }
+  chain.reverse() // 最深在前
+  chain.push(u.origin + '/') // 根兜底
+  return chain
+}
+
+/** 浏览远端目录：列出连接地址/远端目录下的内容，返回可读文本；列不出时逐级回退到根，再给出可操作诊断 */
 async function browseDir(api, cfg) {
   const client = buildClient(cfg)
   const { dir, label } = browseTargetDir(cfg)
-  try {
-    const entries = await client.listDir(dir)
-    return formatListing(entries, label, '')
-  } catch (e) {
-    // 列不出：先回退到父目录（路径不存在时便于参照现有结构）
+  const levels = collectAncestorUrls(dir)
+  // 逐级回退（含根 /），第一个能列出的层级即作为参照
+  for (const lv of levels) {
     try {
-      const parentDir = String(dir || '').replace(/\/[^/]*\/?$/, '') || ''
-      const up = await client.listDir(parentDir)
-      return formatListing(up, parentDir, `（您填的「${label}」无法列出，已回退到父目录，请对照填写远端目录）`)
-    } catch (_) { /* 父目录也失败 → 进入 WebDAV 能力诊断 */ }
-    // WebDAV：用 OPTIONS 探测该地址是否真的是 WebDAV，区分「不是 WebDAV」与「路径不对」
-    if (typeof client.options === 'function') {
-      try {
-        const probeUrl = (typeof dir === 'string' && dir) ? dir : (String(cfg.host || '').replace(/\/+$/, '') + '/')
-        const opt = await client.options(probeUrl)
-        const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
-        if (looksDav) {
-          throw new Error(`该地址是 WebDAV，但您填的路径「${label}」列不出（${e.message}）。请检查远端目录是否拼写正确、是否确实存在。`)
-        }
-        throw new Error(`无法列出目录（${e.message}）。该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点，例如：群晖 https://IP/webdav、Nextcloud https://域名/remote.php/dav/files/用户名/，并检查端口与账号密码。`)
-      } catch (probeErr) {
-        if (/WebDAV/.test(probeErr.message)) throw probeErr
-        throw new Error(`无法列出目录（${e.message}）；探测 WebDAV 能力也失败：${probeErr.message}`)
-      }
-    }
-    throw new Error(`无法列出目录：${e.message}`)
+      const entries = await client.listDir(lv)
+      const note = (lv === dir)
+        ? ''
+        : `（您填的「${label}」列不出，已回退到「${lv}」；群晖等 WebDAV 的共享挂在根下，请把「远端目录」设成 共享名/子目录 形式，例如 homes/lx-music、photo/lx-music）`
+      return formatListing(entries, lv, note)
+    } catch (e) { /* 该层级列不出，尝试更浅的层级 */ }
   }
+  // 任何层级（含根）都列不出 → WebDAV 能力诊断：区分「不是 WebDAV」与「路径/权限不对」
+  const rootUrl = levels[levels.length - 1] || (String(cfg.host || '').replace(/\/+$/, '') + '/')
+  if (typeof client.options === 'function') {
+    try {
+      const opt = await client.options(rootUrl)
+      const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
+      if (looksDav) {
+        throw new Error(`该地址是 WebDAV，但根目录也列不出（可能未登录或无权限）。请确认账号密码已填写、且账号对该共享有读取权限。原始错误：${label}`)
+      }
+      throw new Error(`该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点（群晖通常为 http://IP:5005 或自定义端口；Nextcloud 为 /remote.php/dav/files/用户名/），并检查端口与账号密码。`)
+    } catch (probeErr) {
+      if (/WebDAV/.test(probeErr.message) && /根目录/.test(probeErr.message)) throw probeErr
+      if (/OPTIONS 未返回/.test(probeErr.message)) throw probeErr
+      throw new Error(`无法列出目录（含根）；探测 WebDAV 能力也失败：${probeErr.message}`)
+    }
+  }
+  throw new Error(`无法列出目录（含根）：${label}`)
 }
 
 /** 连接测试：在目标目录放一个临时文件并回读，再删除；失败时探测 WebDAV 能力并给出可操作提示 */
@@ -1247,6 +1280,8 @@ module.exports = {
     testConnection,
     browseDir,
     browseTargetDir,
+    collectAncestorUrls,
+    ensureParentDirs,
     parentDirUrls,
     formatListing,
     parseDavListing,
@@ -1324,7 +1359,7 @@ module.exports = {
           },
           { type: 'text', key: 'host', label: '服务器地址', placeholder: 'https://dav.example.com 或 ftp.example.com 或 192.168.1.10', default: '', tip: 'WebDAV/FTP 含协议或主机名；SMB 只填 IP/主机名，不要带 smb:// 前缀。' },
           { type: 'text', key: 'port', label: '端口', placeholder: 'WebDAV 依协议默认；FTP/SMB 默认 445/21', default: '', tip: '留空使用协议默认端口。SMB 默认 445。' },
-          { type: 'text', key: 'remotePath', label: '远端目录', placeholder: 'lx-music/favorites', default: 'lx-music/favorites', tip: '备份文件所在目录。SMB 时首段是「共享名」，其余是共享内子目录，如 share/subdir。填好后点「浏览目录」可对照现有结构。' },
+          { type: 'text', key: 'remotePath', label: '远端目录', placeholder: 'lx-music/favorites', default: 'lx-music/favorites', tip: '备份文件所在目录（不含文件名）。WebDAV/群晖须以已存在的「共享名」开头，如 homes/lx-music、photo/lx-music；SMB 首段是共享名，如 share/subdir。填好协议+地址后点「浏览目录」（或改地址自动触发）可列出可用共享，照着抄即可。' },
           { type: 'text', key: 'filename', label: '文件名', placeholder: 'lx_favorites.json', default: 'lx_favorites.json' },
           { type: 'text', key: 'username', label: '账号', placeholder: '留空表示匿名/无认证', default: '' },
           { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要密码', default: '' },

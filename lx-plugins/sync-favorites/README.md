@@ -31,7 +31,7 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
 | 同步协议 `type` | `webdav` / `ftp` / `smb`（默认 `webdav`） |
 | 服务器地址 `host` | WebDAV 含协议，如 `https://dav.example.com`；FTP 仅主机名；**SMB 只填 IP/主机名，不要带 `smb://` 前缀** |
 | 端口 `port` | 留空用默认（WebDAV 依协议；FTP 默认 21；SMB 默认 445） |
-| 远端目录 `remotePath` | 备份文件所在目录，默认 `lx-music/favorites`（不含文件名，上传时会自动逐级创建）。**SMB 时首段是「共享名」，其余是共享内子目录**，如 `share/subdir` |
+| 远端目录 `remotePath` | 备份文件所在目录，默认 `lx-music/favorites`（不含文件名，上传时会自动逐级创建）。**WebDAV/群晖必须以「已存在的共享名」开头**，如 `homes/lx-music`、`photo/lx-music`；**SMB 首段是共享名**，如 `share/subdir`。填不准时先点「浏览目录」从根下列出的共享里抄一个。 |
 | 文件名 `filename` | 备份文件名，默认 `lx_favorites.json` |
 | 账号 / 密码 | 留空表示匿名 / 无认证 |
 | 域/工作组 `domain` | 仅 SMB 需要，如 `WORKGROUP`；留空表示无 |
@@ -47,7 +47,7 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
 
 面板按钮：**立即备份** / **立即还原** / **测试连接** / **浏览目录**。
 
-- **浏览目录**：列出「连接地址（或已填远端目录）」下的内容，方便你对照现有结构填写「远端目录」。填好协议 + 服务器地址后，面板也会**自动**列目录显示（地址变更防抖触发），无需手动点按钮。目录不存在时自动回退到父目录列出。
+- **浏览目录**：列出「连接地址（或已填远端目录）」下的内容，方便你对照现有结构填写「远端目录」。填好协议 + 服务器地址后，面板也会**自动**列目录显示（地址变更防抖触发），无需手动点按钮。**若你填的远端目录不存在，会逐级向上回退直到 WebDAV 根 `/`，把群晖/Nextcloud 的真实共享（photo、music、homes、video…）列出来**，照着把「远端目录」改成 `共享名/子目录` 即可。
 - 面板「目录列表」区实时显示最近一次浏览结果；底部「状态」显示上次执行结果与时间（成功/失败 + 解决冲突列表数 + 是否跳过无变化传输）。
 
 ## 实现要点
@@ -73,6 +73,7 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
 
 ## 注意事项
 
+- **群晖 / WebDAV 路径约定**：群晖的 WebDAV 共享挂在根 `/` 下（如 `homes`、`photo`、`music`、`video`）。「远端目录」必须**以已存在的共享名开头**，例如 `homes/lx-music` 或 `photo/lx-music`；直接填 `lx-music/favorites` 这种不存在的顶层路径会被服务器以 HTTP 405 拒绝（不是插件 bug，是服务器不允许在该位置创建集合）。先用「浏览目录」从根下列出的共享里选一个即可。若服务器需要登录，请务必在「账号 / 密码」填好——未登录时部分服务器对 PROPFIND/PUT 也返回 405/403。
 - 「立即还原」/`both` 不再是无脑覆盖：冲突列表按「冲突策略」合并或覆盖，非冲突列表自动按各自改动合并，**不会无谓丢失一侧的收藏**。仍有风险（如策略选 `local`/`remote` 时，被覆盖一侧的该列表改动会丢失），故还原/双向前建议先「立即备份」一份本地数据。
 - 同版本插件无法走「上传更新」覆盖安装（app 版插件管理要求新版本 > 旧版本，详见 [`../DEVELOPMENT.md` 9.2](../DEVELOPMENT.md#92-已知缺陷--坑)），
   改完代码后需推 `beta` 分支让版本号随 app 递增，或卸载重装（⚠️ 卸载会删掉插件目录，`config.json` / `data.json` 一并丢失）。
