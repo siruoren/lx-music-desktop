@@ -278,8 +278,8 @@ const listDataBridge = {
       return { ...raw, list: toRaw(await getListMusics(raw.id)) }
     })
     await overwriteListFull({
-      defaultList: mapList(wantDefault ? (defaultEl && defaultEl.list) : keepDefault),
-      loveList: mapList(wantLove ? (loveEl && loveEl.list) : keepLove),
+      defaultList: mapList(wantDefault ? defaultEl?.list : keepDefault),
+      loveList: mapList(wantLove ? loveEl?.list : keepLove),
       userList: wantUser
         ? others.map(l => ({ ...l, list: mapList(l.list) }))
         : keepUser,
