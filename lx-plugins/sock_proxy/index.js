@@ -744,6 +744,6 @@ module.exports = {
   },
 
   onUpdate(oldVersion) {
-    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新到 v2.1.0（配置仍保留在插件目录）`)
+    console.log(`[plugin:sock_proxy] 已从 v${oldVersion} 更新（插件版本自动与 app 保持一致，配置仍保留在插件目录）`)
   },
 }

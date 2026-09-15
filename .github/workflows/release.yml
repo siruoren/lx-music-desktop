@@ -3,7 +3,7 @@ name: Build
 on:
   push:
     branches:
-      - master
+      - masterxx
 
 env:
   IS_CI: 'true'

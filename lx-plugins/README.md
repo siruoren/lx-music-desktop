@@ -41,13 +41,13 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 ## 新增一个插件项目
 
 1. 在 `lx-plugins/` 下新建目录，目录名即插件名，例如 `lx-plugins/my-plugin/`。
-2. 放入 `plugin.json`：
+2. 放入 `plugin.json`（**不需要写 version**：构建时自动注入仓库根 `package.json` 的 app 版本，
+   所有插件版本自动与 app 保持一致；写了也会被忽略）：
 
    ```json
    {
      "id": "my-plugin",
      "name": "my-plugin",
-     "version": "1.0.0",
      "description": "插件说明",
      "main": "index.js",
      "platforms": ["renderer"]
@@ -156,13 +156,20 @@ grep -rnF '=== Plugin Manager ===' src
 - **插件列表自动发现**：`PluginMeta` 任务扫描 `lx-plugins/*/plugin.json` 得到插件清单，供矩阵构建与发布说明使用；新增插件项目**不需要改任何工作流文件**。
 - **一个插件一个构建任务**：`Plugins` 矩阵按插件并行构建，每个插件产出自己名下的 Artifact（`lx-plugin-<插件名>`），其中一个插件构建失败不影响其它插件（`fail-fast: false`）。
 - **每个插件都是独立附件**：`Release` 任务下载产物时不再合并成一个目录（`merge-multiple: false`），上传规则按前缀区分，因此**每个插件在 Pre-release 里都是单独一个 `.lxplugin` 附件**，可单独下载某一个插件；安装包同理各自独立。
-- **插件不做独立 Release**：插件统一随 app 的 Pre-release 发布，不为插件单独建 Release/tag。需要发新版插件时，改该插件 `plugin.json` 里的 `version`，再推 `beta` 分支即可（每次 beta 推送都会生成新的 Pre-release，附件随之重新上传）。
+- **插件不做独立 Release**：插件统一随 app 的 Pre-release 发布，不为插件单独建 Release/tag。
+- **插件版本自动与 app 版本保持一致**：构建脚本从仓库根 `package.json` 读取 app 版本并注入产物清单
+  （`plugin.json` 无需也无法单独指定版本）。因此发新版插件 = 改完插件代码后推 `beta` 分支即可，
+  附件会带上与 app 一致的版本号。
+- **仅插件变更走快速通道**：`Changes` 任务判断本次推送的变更范围 —— 若只动了 `lx-plugins/**`
+  或 `.github/workflows/plugin-build.yml`，各平台安装包任务全部跳过，只跑插件矩阵，并把新构建的
+  `.lxplugin` 用 `gh release upload --clobber` **覆盖到最新 Pre-release 的附件**（没有 Pre-release
+  时回退为新建一个）；插件本身有变化、需要客户端行为配合时仍推完整安装包流程。
 
 Pre-release 的命名规则：
 
 - **tag**：`v<package.json 版本>-beta.<工作流运行号>`，例如 `v2.12.5-beta.42`
 - **标题**：`Beta v2.12.5 (build 42)`
 - 标记为 **Pre-release**（`prerelease: true`，`draft: false`），因此不会占用「Latest」位置
-- 预发布正文会附带自动生成的更新说明（`generate_release_notes`），并单列一节「插件（每个插件单独一个附件）」，逐行给出插件名、`plugin.json` 里的版本与说明
+- 预发布正文会附带自动生成的更新说明（`generate_release_notes`），并单列一节「插件（每个插件单独一个附件）」，逐行给出插件名、版本（自动等于 app 版本）与说明
 
 > 插件构建脚本零依赖，所以 `Plugins` 任务只做 `checkout` + `node` + 跑脚本，不执行 `npm ci`。
