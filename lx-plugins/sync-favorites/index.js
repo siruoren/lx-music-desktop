@@ -2,15 +2,20 @@
  * sync-favorites —— 通过 WebDAV / FTP 同步「我的列表」（试听列表 + 我的收藏 + 创建的歌单）。
  *
  * 功能：
- *   1. 备份（上传）：把客户端「我的列表」导出为 JSON，加密后（可选）上传到 WebDAV 或 FTP。
+ *   1. 备份（上传）：把客户端「我的列表」导出为 JSON，加密后（可选）上传到 WebDAV / FTP / SMB。
  *      同步范围可配：default=试听列表 / love=我的收藏 / user=我的列表(创建的歌单)，默认三类全同步。
  *   2. 还原（下载）：从远端拉取备份文件，解密（若加密）后写回客户端「我的列表」。
  *   3. 增量同步 + 冲突合并：以「上次同步基线」做三路合并，仅传输/写回真正变化的部分；
  *      当本地与远端都改了同一列表时，按「冲突策略」合并（并集，不丢歌）或以本地/远端覆盖。
  *   4. 定时同步：可设置「同步方向 + 间隔分钟」，到点在后台自动执行。
+ *   5. 目录浏览：填写协议 + 服务器地址后，点「浏览目录」（或改地址自动触发）即可列出远端目录，
+ *      方便参照填写「远端目录」。
  *
- * 网络实现：纯 Node 内置模块（http/https/net/tls/crypto/url），零第三方依赖，
+ * 网络实现：纯 Node 内置模块（http/https/net/tls/crypto/url/fs/child_process/os），零第三方依赖，
  * 因此插件产物仍是单个 .lxplugin 文件，不需要任何 node_modules。
+ *   - WebDAV / FTP：用内置模块直接实现协议。
+ *   - SMB：委派给系统自带工具（macOS 的 mount_smbfs、Windows 的 net use、或 samba 的 smbclient），
+ *     避免手搓 SMB 二进制协议；若都不可用会给出明确报错。
  *
  * 收藏数据的读取/写回：经由宿主在 window.lx.plugins.listData 上提供的桥
  * （src/plugins/renderer.ts 的 listDataBridge），渲染端收藏存于 SQLite，
@@ -26,7 +31,11 @@ const https = require('https')
 const net = require('net')
 const tls = require('tls')
 const crypto = require('crypto')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
 const { URL } = require('url')
+const { execFile, execFileSync } = require('child_process')
 
 /** 默认配置（全部可在「插件管理（侧边栏）→ sync-favorites → 设置」中修改） */
 const DEFAULT_CONFIG = {
@@ -44,6 +53,8 @@ const DEFAULT_CONFIG = {
   username: '',
   /** 密码 */
   password: '',
+  /** SMB：域/工作组（Windows 共享常需要，如 WORKGROUP；留空表示无） */
+  domain: '',
   /** WebDAV：忽略 TLS 证书校验（自签名证书时开启） */
   insecure: false,
   /** FTP：启用 FTPS（AUTH TLS 显式加密） */
@@ -68,6 +79,8 @@ const DEFAULT_CONFIG = {
   encryptPassword: '',
   /** 上次执行结果（UI 状态，持久化） */
   lastResult: '',
+  /** 浏览到的远端目录列表（UI 状态，持久化） */
+  dirListing: '',
   /** 上次成功同步时间戳 */
   lastSyncAt: 0,
 }
@@ -153,6 +166,96 @@ function parseEnvelope(text, cfg) {
   return obj.lists
 }
 
+/** ============================ 目录列表解析（WebDAV / FTP / SMB 共用） ============================ */
+
+/** 目录条目排序：目录在前，再按名称 */
+function sortEntries(a, b) {
+  return (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || String(a.name).localeCompare(String(b.name))
+}
+
+/** 解析 WebDAV PROPFIND 多状态响应，返回 { name, isDir }[]（排除自身条目） */
+function parseDavListing(xml, baseUrl) {
+  const out = []
+  const re = /<(d:)?response>([\s\S]*?)<\/\1response>/gi
+  let m
+  while ((m = re.exec(xml))) {
+    const block = m[2]
+    const hrefM = /<(d:)?href>([\s\S]*?)<\/\1href>/i.exec(block)
+    if (!hrefM) continue
+    const href = decodeURIComponent(hrefM[2].trim())
+    const isDir = /<(d:)?collection\s*\/?>/i.test(block)
+    let abs
+    try { abs = new URL(href, baseUrl).pathname } catch (e) { abs = href }
+    let basePath
+    try { basePath = new URL(baseUrl).pathname } catch (e) { basePath = baseUrl }
+    if (abs === basePath || abs === basePath + '/') continue // 跳过自身
+    const name = abs.replace(/\/+$/, '').split('/').pop()
+    if (!name) continue
+    out.push({ name, isDir })
+  }
+  out.sort(sortEntries)
+  return out
+}
+
+/** 解析 FTP MLSD 响应（type=dir;...; name=xxx） */
+function parseMlsd(text) {
+  const out = []
+  for (const line of text.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    const m = /^(.*?);\s*name=(.*)$/.exec(t)
+    if (!m) continue
+    const isDir = /(^|;)\s*type=dir/i.test(m[1])
+    const name = m[2]
+    if (name === '.' || name === '..') continue
+    out.push({ name, isDir })
+  }
+  out.sort(sortEntries)
+  return out
+}
+
+/** 解析 FTP 传统 LIST 的 unix 风格行（drwxr-xr-x ... name） */
+function parseUnixList(text) {
+  const out = []
+  for (const line of text.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    const m = /^([\-dbclps])([rwxST\-]{9})\s+\d+\s+\S+\s+\S+\s+\d+\s+[\w]{3}\s+\d+\s+[\d:]+\s+(.+)$/.exec(t)
+    if (!m) continue
+    const name = m[3].trim()
+    if (name === '.' || name === '..') continue
+    out.push({ name, isDir: m[1] === 'd' })
+  }
+  out.sort(sortEntries)
+  return out
+}
+
+/** 解析 smbclient `ls` 输出（  name <type> <size> <date> <time>） */
+function parseSmbList(text) {
+  const out = []
+  for (const line of text.split('\n')) {
+    const t = line.trim()
+    if (!t) continue
+    const m = /^\s*(\S+)\s+([A-Za-z])\s+\d+\s+/.exec(t)
+    if (!m) continue
+    const name = m[1]
+    if (name === '.' || name === '..') continue
+    out.push({ name, isDir: m[2].toUpperCase() === 'D' })
+  }
+  out.sort(sortEntries)
+  return out
+}
+
+/** 跑一个子进程命令（无 shell，参数数组化，避免密码注入） */
+function run(cmd, args, opts) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, Object.assign({ timeout: 30000, windowsHide: true }, opts), (err, stdout, stderr) => {
+      if (err) { err.stdout = stdout || ''; err.stderr = stderr || ''; return reject(err) }
+      resolve({ stdout: stdout || '', stderr: stderr || '' })
+    })
+  })
+}
+
 /** ============================ WebDAV 客户端 ============================ */
 
 /** 发起一次 HTTP/HTTPS 请求（跟随重定向由调用方处理） */
@@ -166,6 +269,10 @@ function makeRequest(urlStr, options) {
     }
     const mod = url.protocol === 'https:' ? https : http
     const headers = Object.assign({}, options.headers)
+    // 部分 WebDAV 服务（如群晖）会拒绝无 User-Agent 的请求，统一带上
+    if (!headers['User-Agent'] && !headers['user-agent']) {
+      headers['User-Agent'] = 'lx-music-sync/2.12.5'
+    }
     if (options.auth && options.auth.user !== undefined) {
       headers['Authorization'] = 'Basic ' + Buffer.from(options.auth.user + ':' + options.auth.pass).toString('base64')
     }
@@ -196,18 +303,47 @@ function makeRequest(urlStr, options) {
   })
 }
 
-/** 逐级 MKCOL 创建远端父目录 */
-async function ensureParentDirs(fileUrl, auth, insecure, timeout) {
+/** 从一个文件 URL 解析出「需逐级创建的父目录 URL 列表」（用于 MKCOL 建多层级目录）。
+ *  例：http://h:5505/lx-music/favorites/lx_favorites.json
+ *    → ['http://h:5505/lx-music/', 'http://h:5505/lx-music/favorites/'] */
+function parentDirUrls(fileUrl) {
   const u = new URL(fileUrl)
   const segs = u.pathname.split('/').filter(Boolean)
   segs.pop() // 去掉文件名
+  const urls = []
   let acc = u.origin
   for (const s of segs) {
     acc += '/' + s
-    // 201 创建 / 405 已存在 / 207 多状态 → 均可忽略
-    await makeRequest(acc + '/', { method: 'MKCOL', auth, secure: insecure ? false : undefined, timeout })
-      .catch(() => { /* 目录已存在或父级约束，逐级推进即可 */ })
+    urls.push(acc + '/')
   }
+  return urls
+}
+
+/** 逐级 MKCOL 创建远端父目录；返回创建过程中出现的「非预期」错误。
+ *  注意：群晖等 WebDAV 对「不存在的路径」返回 405/409，与「已存在」的语义相同状态码，
+ *  故这里对 405/409 用 PROPFIND 二次确认是否真已存在，避免把「创建失败」误判为「已存在」后继续 PUT 到空目录。 */
+async function ensureParentDirs(fileUrl, auth, insecure, timeout) {
+  const errors = []
+  const davOpts = (method, extra) => Object.assign({
+    method, auth, secure: insecure ? false : undefined, timeout,
+  }, extra || {})
+  for (const dirUrl of parentDirUrls(fileUrl)) {
+    try {
+      const res = await makeRequest(dirUrl, davOpts('MKCOL'))
+      if ([201, 204, 207].includes(res.status) || (res.status >= 300 && res.status < 400)) continue // 创建成功 / 重定向
+      if ([405, 409].includes(res.status)) {
+        // 405/409：可能已存在，用 PROPFIND 验证
+        const ex = await makeRequest(dirUrl, davOpts('PROPFIND', { headers: { Depth: '0' } }))
+        if (ex.status >= 200 && ex.status < 300) continue // 确实已存在
+        errors.push(`${dirUrl} → 目录不存在且无法创建（HTTP ${res.status}）`)
+      } else {
+        errors.push(`${dirUrl} → HTTP ${res.status}`)
+      }
+    } catch (e) {
+      errors.push(`${dirUrl} → ${e.message}`)
+    }
+  }
+  return errors
 }
 
 function createWebDavClient(cfg) {
@@ -227,7 +363,12 @@ function createWebDavClient(cfg) {
         headers: { 'Content-Type': 'application/octet-stream' },
         auth, secure: insecure ? false : undefined, timeout,
       })
-      if (res.status >= 400) throw new Error('WebDAV 上传失败：HTTP ' + res.status)
+      if (res.status >= 400) {
+        const extra = res.status === 405
+          ? '（服务器不允许 PUT：群晖等 WebDAV 要求「远端目录」以已存在的共享名开头，例如 homes/你的目录、photo/你的目录；请先点「浏览目录」查看可用共享，再把远端目录改成「共享名/子目录」形式；若该路径需要登录，请确认账号密码已填写）'
+          : (res.status === 404 ? '（路径不存在，请先用「浏览目录」确认远端目录正确，且父目录已存在）' : '')
+        throw new Error('WebDAV 上传失败：HTTP ' + res.status + extra)
+      }
       return res
     },
     async getFile(url) {
@@ -236,8 +377,31 @@ function createWebDavClient(cfg) {
       if (res.status >= 400) throw new Error('WebDAV 下载失败：HTTP ' + res.status)
       return res.body.toString('utf8')
     },
+    /** 列出目录（PROPFIND Depth:1），返回 { name, isDir }[]；collectionUrl 以 / 结尾 */
+    async listDir(collectionUrl) {
+      const url = collectionUrl.endsWith('/') ? collectionUrl : collectionUrl + '/'
+      const body = '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:displayname/></d:prop></d:propfind>'
+      const res = await makeRequest(url, {
+        method: 'PROPFIND',
+        headers: { Depth: '1', 'Content-Type': 'application/xml; charset=utf-8' },
+        body: Buffer.from(body, 'utf8'),
+        auth, secure: insecure ? false : undefined, timeout,
+      })
+      if (res.status >= 400) throw new Error('WebDAV 列目录失败：HTTP ' + res.status)
+      return parseDavListing(res.body.toString('utf8'), url)
+    },
+    /** WebDAV 能力探测：OPTIONS 看 Allow / DAV 头，用于诊断「地址是否真的是 WebDAV」 */
+    async options(url) {
+      const res = await makeRequest(url, { method: 'OPTIONS', auth, secure: insecure ? false : undefined, timeout })
+      const h = res.headers || {}
+      return {
+        status: res.status,
+        allow: String(h['allow'] || h['Allow'] || '').toUpperCase(),
+        dav: String(h['dav'] || h['DAV'] || ''),
+      }
+    },
     async ensureParent(fileUrl) {
-      await ensureParentDirs(fileUrl, auth, insecure, timeout)
+      return await ensureParentDirs(fileUrl, auth, insecure, timeout)
     },
     async remove(url) {
       await makeRequest(url, { method: 'DELETE', auth, secure: insecure ? false : undefined, timeout })
@@ -461,6 +625,34 @@ class FtpClient {
     await this._cmd('DELE ' + remotePath).catch(() => { /* 不存在则忽略 */ })
   }
 
+  /** 列出目录（优先 MLSD，回落 LIST），返回 { name, isDir }[] */
+  async listDir(remoteDir) {
+    const dir = remoteDir || '/'
+    let data = await this._openData()
+    let prep = await this._cmd('MLSD ' + dir)
+    let useMlsd = true
+    if (prep.code !== '150' && prep.code !== '125') {
+      useMlsd = false
+      try { data.destroy() } catch (e) { /* noop */ }
+      data = await this._openData()
+      prep = await this._cmd('LIST ' + dir)
+      if (prep.code !== '150' && prep.code !== '125') {
+        try { data.destroy() } catch (e) { /* noop */ }
+        throw new Error('FTP 列目录失败：' + prep.message)
+      }
+    }
+    const done226 = this._waitFinal()
+    const chunks = []
+    await new Promise((resolve, reject) => {
+      data.on('data', c => chunks.push(c))
+      data.on('error', reject)
+      data.on('close', resolve)
+    })
+    await done226
+    const text = Buffer.concat(chunks).toString('utf8')
+    return useMlsd ? parseMlsd(text) : parseUnixList(text)
+  }
+
   close() {
     try { this._cmd('QUIT').catch(() => {}) } catch (e) { /* noop */ }
     try { if (this.ctrl) this.ctrl.destroy() } catch (e) { /* noop */ }
@@ -505,6 +697,195 @@ function createFtpClient(cfg) {
         client.close()
       }
     },
+    async listDir(remoteDir) {
+      await client.connect()
+      try {
+        return await client.listDir(remoteDir)
+      } finally {
+        client.close()
+      }
+    },
+  }
+}
+
+/** ============================ SMB 客户端 ============================
+ * 委派给系统自带工具（零第三方依赖）：
+ *   - 优先 smbclient（samba，Linux 常见；macOS 可 brew install samba）
+ *   - macOS 用 mount_smbfs（系统自带，用户态挂载，无需 root）
+ *   - Windows 用 net use（连接 UNC 后走 fs）
+ * 文件落点 = //host/<share>/<remotePath 去掉首段>/<filename>
+ * 即 remotePath 的首段是「共享名」，其余是共享内的子目录。
+ */
+
+/** 探测可用后端：smbclient / mount(macOS) / netuse(Windows) / none */
+function detectSmbBackend() {
+  try {
+    execFileSync('smbclient', ['--version'], { stdio: 'ignore', windowsHide: true })
+    return 'smbclient'
+  } catch (e) { /* noop */ }
+  const p = process.platform
+  if (p === 'darwin') return 'mount'
+  if (p === 'win32') return 'netuse'
+  return 'none'
+}
+
+/** 从 fileUrl（格式 host/share/sub/file）解析「共享内子目录 + 文件名」；非法时回落到入参 */
+function parseSmbTarget(fileUrl, fallbackSub, fallbackFile) {
+  if (fileUrl) {
+    const s = String(fileUrl).split('/').filter(Boolean)
+    const fn = s[s.length - 1]
+    const sd = s.slice(2, s.length - 1).join('/') // 跳过 host(0) 与 share(1)
+    if (fn != null && fn !== '') return { subDir: sd, filename: fn }
+  }
+  return { subDir: fallbackSub, filename: fallbackFile }
+}
+
+function createSmbClient(cfg) {
+  const host = String(cfg.host || '').replace(/^\/+|\/+$/g, '')
+  const rawPath = String(cfg.remotePath || '').replace(/^\/+/, '').replace(/\/+$/g, '')
+  const segs = rawPath.split('/').filter(Boolean)
+  const share = segs.shift() || ''          // 首段 = 共享名
+  const subDir = segs.join('/')             // 共享内的子目录
+  const filename = String(cfg.filename || 'lx_favorites.json').replace(/^\/+/, '')
+  const user = cfg.username || ''
+  const pass = cfg.password || ''
+  const domain = cfg.domain || ''
+  const timeout = parseInt(cfg.timeout, 10) || 20000
+  const q = s => JSON.stringify(String(s))   // 给 smbclient -c 子命令里的路径加引号
+
+  const backend = detectSmbBackend()
+  if (backend === 'none') {
+    throw new Error('当前系统未找到可用的 SMB 客户端：请安装 samba（提供 smbclient），或在 macOS 用系统自带 mount_smbfs、Windows 用 net use')
+  }
+
+  // —— smbclient 后端：单条命令完成一个动作 ——
+  const baseArgs = ['//' + host + '/' + share]
+  if (user) {
+    baseArgs.push('-U', user + (domain ? ';' + domain : '') + '%' + pass)
+  } else {
+    baseArgs.push('-N', '-U', 'guest') // 匿名
+  }
+  function smbCmd(command) {
+    return run('smbclient', baseArgs.concat(['-c', command]), { timeout })
+  }
+  // 从传入的 fileUrl（格式 host/share/sub/file）解析出「共享内子目录 + 文件名」，
+  // 这样测试连接用临时文件名时也不会覆盖真实备份文件。
+  function targetFrom(fileUrl) {
+    return parseSmbTarget(fileUrl, subDir, filename)
+  }
+  async function smbPut(fileUrl, content) {
+    const t = targetFrom(fileUrl)
+    const tmp = path.join(os.tmpdir(), 'lx-smb-put-' + Date.now())
+    fs.writeFileSync(tmp, content)
+    try { await smbCmd('put ' + q(tmp) + ' ' + q([t.subDir, t.filename].filter(Boolean).join('/'))) }
+    finally { try { fs.unlinkSync(tmp) } catch (e) { /* noop */ } }
+  }
+  async function smbGet(fileUrl) {
+    const t = targetFrom(fileUrl)
+    const tmp = path.join(os.tmpdir(), 'lx-smb-get-' + Date.now())
+    await smbCmd('get ' + q([t.subDir, t.filename].filter(Boolean).join('/')) + ' ' + q(tmp))
+    try { return fs.readFileSync(tmp, 'utf8') } finally { try { fs.unlinkSync(tmp) } catch (e) { /* noop */ } }
+  }
+  async function smbMkdir(fileUrl) {
+    const t = targetFrom(fileUrl)
+    if (!t.subDir) return
+    const parts = t.subDir.split('/').filter(Boolean)
+    let cur = ''
+    for (const p of parts) { cur += (cur ? '/' : '') + p; await smbCmd('mkdir ' + q(cur)).catch(() => {}) }
+  }
+  async function smbList(dir) {
+    const rel = dir || '.' // dir 已是「共享内相对路径」（含 subDir）
+    const { stdout } = await smbCmd('ls ' + q(rel))
+    return parseSmbList(stdout)
+  }
+
+  // —— 挂载后端（macOS mount_smbfs / Windows net use）：挂载后走 fs ——
+  let fsRoot = ''
+  let mountRoot = ''
+  function smbUrlUserPart() {
+    let up = ''
+    if (domain) up += encodeURIComponent(domain) + ';'
+    if (user) up += encodeURIComponent(user)
+    if (pass) up += ':' + encodeURIComponent(pass)
+    return up
+  }
+  async function connectFs() {
+    if (backend === 'mount') {
+      mountRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lx-smb-'))
+      const url = '//' + (smbUrlUserPart() ? smbUrlUserPart() + '@' : '') + host + '/' + share
+      await run('mount_smbfs', [url, mountRoot], { timeout })
+      fsRoot = mountRoot
+    } else { // win32 net use
+      fsRoot = '\\\\' + host + '\\' + share
+      const args = [fsRoot]
+      if (user) {
+        args.push('/user:' + (domain ? domain + '\\' : '') + user)
+        if (pass) args.push(pass)
+      }
+      args.push('/persistent:no')
+      await run('net', ['use'].concat(args), { timeout })
+    }
+  }
+  async function disconnectFs() {
+    if (backend === 'mount') {
+      try { await run('umount', [mountRoot], { timeout }) }
+      catch (e) { try { await run('diskutil', ['unmount', mountRoot], { timeout }) } catch (_) { /* noop */ } }
+    } else {
+      try { await run('net', ['use', fsRoot, '/delete', '/y'], { timeout }) } catch (_) { /* noop */ }
+    }
+  }
+  async function withFs(fn) {
+    await connectFs()
+    try { return await fn() } finally { await disconnectFs() }
+  }
+
+  return {
+    protocol: 'smb',
+    async putFile(fileUrl, content) {
+      if (backend === 'smbclient') return smbPut(fileUrl, content)
+      return withFs(() => {
+        const t = targetFrom(fileUrl)
+        const dir = path.join(fsRoot, t.subDir)
+        fs.mkdirSync(dir, { recursive: true })
+        fs.writeFileSync(path.join(dir, t.filename), content)
+      })
+    },
+    async getFile(fileUrl) {
+      if (backend === 'smbclient') return smbGet(fileUrl)
+      return withFs(() => {
+        const t = targetFrom(fileUrl)
+        return fs.readFileSync(path.join(fsRoot, t.subDir, t.filename), 'utf8')
+      })
+    },
+    async ensureParent(fileUrl) {
+      if (backend === 'smbclient') return smbMkdir(fileUrl)
+      return withFs(() => {
+        const t = targetFrom(fileUrl)
+        if (t.subDir) fs.mkdirSync(path.join(fsRoot, t.subDir), { recursive: true })
+      })
+    },
+    async remove(fileUrl) {
+      if (backend === 'smbclient') {
+        const t = targetFrom(fileUrl)
+        return smbCmd('rm ' + q([t.subDir, t.filename].filter(Boolean).join('/'))).catch(() => {})
+      }
+      return withFs(() => {
+        const t = targetFrom(fileUrl)
+        try { fs.unlinkSync(path.join(fsRoot, t.subDir, t.filename)) } catch (e) { /* noop */ }
+      })
+    },
+    async listDir(dir) {
+      if (backend === 'smbclient') return smbList(dir)
+      return withFs(() => {
+        const p = path.join(fsRoot, dir || '') // dir 已是「共享内相对路径」
+        const names = fs.readdirSync(p)
+        return names.filter(n => n !== '.' && n !== '..').map(n => {
+          let isDir = false
+          try { isDir = fs.statSync(path.join(p, n)).isDirectory() } catch (e) { /* noop */ }
+          return { name: n, isDir }
+        }).sort(sortEntries)
+      })
+    },
   }
 }
 
@@ -513,6 +894,7 @@ function createFtpClient(cfg) {
 function buildClient(cfg) {
   const type = String(cfg.type || 'webdav').toLowerCase()
   if (type === 'ftp') return createFtpClient(cfg)
+  if (type === 'smb') return createSmbClient(cfg)
   return createWebDavClient(cfg)
 }
 
@@ -760,15 +1142,114 @@ async function doSync(api, cfg, direction) {
   return msgs.join('；')
 }
 
-/** 连接测试：在目标目录放一个临时文件并回读，再删除 */
+/** 计算「浏览目录」目标：返回 { dir, label }；dir 是该协议 listDir 期望的形式 */
+function browseTargetDir(cfg) {
+  const type = String(cfg.type || 'webdav').toLowerCase()
+  if (type === 'smb') {
+    const rawPath = String(cfg.remotePath || '').replace(/^\/+/, '').replace(/\/+$/g, '')
+    const segs = rawPath.split('/').filter(Boolean)
+    segs.shift() // 去掉共享名（SMB listDir 的相对路径是共享内子目录）
+    return {
+      dir: segs.join('/'),
+      label: 'smb://' + (cfg.host || '') + '/' + rawPath,
+    }
+  }
+  const fileUrl = buildRemoteUrl(cfg)
+  const parent = fileUrl.replace(/[^/]+$/, '')
+  return { dir: parent, label: parent }
+}
+
+/** 把目录项渲染为可读文本（目录在前） */
+function formatListing(entries, label, note) {
+  const sorted = entries.slice().sort((a, b) => (Number(b.isDir) - Number(a.isDir)) || String(a.name).localeCompare(String(b.name)))
+  const lines = sorted.map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
+  const body = entries.length ? `目录下共 ${entries.length} 项（目录在前）：\n` + lines.join('\n') : '（空目录）'
+  return `「${label}」${note ? '\n' + note : ''}\n${body}`
+}
+
+/** 从「某个远端目录 URL」逐级向上收集候选 URL（最深的在前，根 / 在最后兜底）。
+ *  例：http://h:5505/lx-music/favorites/ →
+ *      [http://h:5505/lx-music/favorites/, http://h:5505/lx-music/, http://h:5505/]
+ *  这样当配置的远端目录不存在时，能一路回退到 WebDAV 根，列出真实共享（群晖的共享就挂在根下）。 */
+function collectAncestorUrls(dir) {
+  if (!/^https?:\/\//i.test(dir)) return [dir] // SMB 等相对路径不在此回退
+  const u = new URL(dir)
+  const segs = u.pathname.split('/').filter(Boolean)
+  const chain = []
+  let acc = u.origin
+  for (const s of segs) {
+    acc += '/' + s
+    chain.push(acc + '/')
+  }
+  chain.reverse() // 最深在前
+  chain.push(u.origin + '/') // 根兜底
+  return chain
+}
+
+/** 浏览远端目录：列出连接地址/远端目录下的内容，返回可读文本；列不出时逐级回退到根，再给出可操作诊断 */
+async function browseDir(api, cfg) {
+  const client = buildClient(cfg)
+  const { dir, label } = browseTargetDir(cfg)
+  const levels = collectAncestorUrls(dir)
+  // 逐级回退（含根 /），第一个能列出的层级即作为参照
+  for (const lv of levels) {
+    try {
+      const entries = await client.listDir(lv)
+      const note = (lv === dir)
+        ? ''
+        : `（您填的「${label}」列不出，已回退到「${lv}」；群晖等 WebDAV 的共享挂在根下，请把「远端目录」设成 共享名/子目录 形式，例如 homes/lx-music、photo/lx-music）`
+      return formatListing(entries, lv, note)
+    } catch (e) { /* 该层级列不出，尝试更浅的层级 */ }
+  }
+  // 任何层级（含根）都列不出 → WebDAV 能力诊断：区分「不是 WebDAV」与「路径/权限不对」
+  const rootUrl = levels[levels.length - 1] || (String(cfg.host || '').replace(/\/+$/, '') + '/')
+  if (typeof client.options === 'function') {
+    try {
+      const opt = await client.options(rootUrl)
+      const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
+      if (looksDav) {
+        throw new Error(`该地址是 WebDAV，但根目录也列不出（可能未登录或无权限）。请确认账号密码已填写、且账号对该共享有读取权限。原始错误：${label}`)
+      }
+      throw new Error(`该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点（群晖通常为 http://IP:5005 或自定义端口；Nextcloud 为 /remote.php/dav/files/用户名/），并检查端口与账号密码。`)
+    } catch (probeErr) {
+      if (/WebDAV/.test(probeErr.message) && /根目录/.test(probeErr.message)) throw probeErr
+      if (/OPTIONS 未返回/.test(probeErr.message)) throw probeErr
+      throw new Error(`无法列出目录（含根）；探测 WebDAV 能力也失败：${probeErr.message}`)
+    }
+  }
+  throw new Error(`无法列出目录（含根）：${label}`)
+}
+
+/** 连接测试：在目标目录放一个临时文件并回读，再删除；失败时探测 WebDAV 能力并给出可操作提示 */
 async function testConnection(api, cfg) {
   const client = buildClient(cfg)
   const fileUrl = buildRemoteUrl(cfg)
   const parent = fileUrl.replace(/[^/]+$/, '')
   const tmpUrl = parent + '.lx_sync_test_' + Date.now()
   const probe = JSON.stringify({ _test: true, _t: Date.now() })
-  await client.ensureParent(fileUrl)
-  await client.putFile(tmpUrl, probe)
+  // 建目录：收集非预期错误（已存在等可接受），有真实错误则记日志但不直接阻断（部分服务器允许 PUT 自动建目录）
+  const mkErrors = await client.ensureParent(fileUrl)
+  if (mkErrors && mkErrors.length) {
+    api.logger.warn('sync-favorites 创建远端目录时部分失败（可能不影响写入）：', mkErrors.join('; '))
+  }
+  try {
+    await client.putFile(tmpUrl, probe)
+  } catch (e) {
+    // PUT 失败：WebDAV 客户端尝试 OPTIONS 探测，判断地址是否真的启用了 WebDAV；SMB/FTP 无此能力则跳过
+    let hint = ''
+    if (typeof client.options === 'function') {
+      try {
+        const opt = await client.options(parent)
+        const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
+        if (!looksDav) {
+          hint = '；该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率未指向 WebDAV 挂载点或未启用 WebDAV'
+        }
+      } catch (_) { /* 探测失败不影响主错误 */ }
+    } else if (String(cfg.type || '').toLowerCase() === 'smb') {
+      hint = '；SMB 连接失败请检查：服务器地址是否填 IP/主机名（不带 smb://）、remotePath 首段是否为共享名、账号/域/密码是否正确'
+    }
+    throw new Error(e.message + hint)
+  }
   const back = await client.getFile(tmpUrl)
   let ok = false
   try { ok = JSON.parse(back)._t != null } catch (e) { /* noop */ }
@@ -794,6 +1275,22 @@ module.exports = {
     normalizeScope,
     filterByScope,
     filterBaseByScope,
+    buildClient,
+    buildRemoteUrl,
+    testConnection,
+    browseDir,
+    browseTargetDir,
+    collectAncestorUrls,
+    ensureParentDirs,
+    parentDirUrls,
+    formatListing,
+    parseDavListing,
+    parseMlsd,
+    parseUnixList,
+    parseSmbList,
+    detectSmbBackend,
+    createSmbClient,
+    parseSmbTarget,
   },
   setup(api) {
     const state = Object.assign({}, DEFAULT_CONFIG, api.getConfig())
@@ -830,7 +1327,22 @@ module.exports = {
       }
     }
 
-    ctx = { api, state, startTimer, stopTimer, execute }
+    /** 浏览远端目录并写入 state.dirListing（持久化，面板「目录列表」区展示） */
+    const doBrowse = async() => {
+      try {
+        const text = await browseDir(api, state)
+        state.dirListing = text
+        state.lastResult = `浏览目录成功（${formatTime(Date.now())}）`
+      } catch (e) {
+        state.dirListing = '浏览失败：' + e.message
+        state.lastResult = `浏览目录失败（${formatTime(Date.now())}）：${e.message}`
+        api.logger.error('sync-favorites 浏览目录失败：', e)
+      } finally {
+        persist({ dirListing: state.dirListing, lastResult: state.lastResult })
+      }
+    }
+
+    ctx = { api, state, startTimer, stopTimer, execute, doBrowse, _connSig: '', _browseTimer: null }
 
     /* ---------- 声明式设置面板 ---------- */
     if (api.registerSettings) {
@@ -842,15 +1354,16 @@ module.exports = {
             key: 'type',
             label: '同步协议',
             default: 'webdav',
-            placeholder: 'webdav 或 ftp',
-            tip: 'webdav：基于 HTTP 的网盘/同步盘；ftp：文件传输协议（可勾选 FTPS 加密）。',
+            placeholder: 'webdav / ftp / smb',
+            tip: 'webdav：基于 HTTP 的网盘/同步盘；ftp：文件传输协议（可勾选 FTPS 加密）；smb：Windows/NAS 文件共享（委派系统自带工具，macOS 用 mount_smbfs、Windows 用 net use、或 samba 的 smbclient）。',
           },
-          { type: 'text', key: 'host', label: '服务器地址', placeholder: 'https://dav.example.com 或 ftp.example.com', default: '' },
-          { type: 'text', key: 'port', label: '端口', placeholder: 'WebDAV 依协议默认；FTP 默认 21', default: '', tip: '留空使用协议默认端口。' },
-          { type: 'text', key: 'remotePath', label: '远端目录', placeholder: 'lx-music/favorites', default: 'lx-music/favorites' },
+          { type: 'text', key: 'host', label: '服务器地址', placeholder: 'https://dav.example.com 或 ftp.example.com 或 192.168.1.10', default: '', tip: 'WebDAV/FTP 含协议或主机名；SMB 只填 IP/主机名，不要带 smb:// 前缀。' },
+          { type: 'text', key: 'port', label: '端口', placeholder: 'WebDAV 依协议默认；FTP/SMB 默认 445/21', default: '', tip: '留空使用协议默认端口。SMB 默认 445。' },
+          { type: 'text', key: 'remotePath', label: '远端目录', placeholder: 'lx-music/favorites', default: 'lx-music/favorites', tip: '备份文件所在目录（不含文件名）。WebDAV/群晖须以已存在的「共享名」开头，如 homes/lx-music、photo/lx-music；SMB 首段是共享名，如 share/subdir。填好协议+地址后点「浏览目录」（或改地址自动触发）可列出可用共享，照着抄即可。' },
           { type: 'text', key: 'filename', label: '文件名', placeholder: 'lx_favorites.json', default: 'lx_favorites.json' },
           { type: 'text', key: 'username', label: '账号', placeholder: '留空表示匿名/无认证', default: '' },
           { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要密码', default: '' },
+          { type: 'text', key: 'domain', label: '域/工作组（仅 SMB）', placeholder: '如 WORKGROUP，留空表示无', default: '' },
           { type: 'switch', key: 'insecure', label: 'WebDAV 忽略证书校验（自签名）', default: false },
           { type: 'switch', key: 'secure', label: 'FTP 启用 FTPS（AUTH TLS 加密）', default: false },
           { type: 'switch', key: 'passive', label: 'FTP 被动模式', default: true, tip: '绝大多数 FTP 服务器需要开启；如遇连接超时再尝试关闭。' },
@@ -892,7 +1405,13 @@ module.exports = {
               { label: '立即备份', action: 'backup' },
               { label: '立即还原', action: 'restore' },
               { label: '测试连接', action: 'test' },
+              { label: '浏览目录', action: 'browse' },
             ],
+          },
+          {
+            type: 'info',
+            label: '目录列表（填好协议/地址后自动显示，或点「浏览目录」）',
+            text: () => (ctx && ctx.state.dirListing) || (state.dirListing || '尚未浏览'),
           },
           {
             type: 'info',
@@ -910,7 +1429,7 @@ module.exports = {
     })
   },
 
-  /** 设置面板改动配置后调用：同步进内存，并按需重启定时器 */
+  /** 设置面板改动配置后调用：同步进内存，并按需重启定时器；连接地址变更时自动浏览目录 */
   onConfigChange(next) {
     if (!ctx) return undefined
     const prevAuto = ctx.state.autoSync
@@ -922,6 +1441,15 @@ module.exports = {
       if (ctx.state.autoSync && ctx.state.interval > 0) ctx.startTimer()
       else ctx.stopTimer()
     }
+    // 连接地址相关字段变化 → 防抖后自动浏览目录，供参照配置目标目录
+    const connSig = [ctx.state.type, ctx.state.host, ctx.state.port, ctx.state.domain, ctx.state.username, ctx.state.password].join('|')
+    if (connSig !== ctx._connSig) {
+      ctx._connSig = connSig
+      if (ctx._browseTimer) clearTimeout(ctx._browseTimer)
+      if (ctx.state.host) {
+        ctx._browseTimer = setTimeout(() => { void ctx.doBrowse().catch(e => api.logger.error('sync-favorites 自动浏览失败：', e)) }, 900)
+      }
+    }
     return undefined
   },
 
@@ -931,13 +1459,14 @@ module.exports = {
     if (action === 'backup') return ctx.execute('upload')
     if (action === 'restore') return ctx.execute('download')
     if (action === 'test') return ctx.execute('test')
+    if (action === 'browse') return ctx.doBrowse()
     if (action === 'sync') return ctx.execute(ctx.state.mode)
     return undefined
   },
 
   /** 卸载/禁用：清理定时器 */
   uninstall() {
-    if (ctx) ctx.stopTimer()
+    if (ctx) { ctx.stopTimer(); if (ctx._browseTimer) clearTimeout(ctx._browseTimer) }
     ctx = null
     console.log('[plugin:sync-favorites] 已卸载，定时器已清理')
   },

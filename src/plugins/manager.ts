@@ -340,8 +340,10 @@ export class PluginManager {
     const target = join(this.pluginsDir, id)
     if (!existsSync(target)) return fail(`插件未安装：${id}，无法更新`)
     const oldManifest = readManifest(target)
-    if (compareVersion(newManifest.version, oldManifest.version) <= 0) {
-      return fail(`新版本（${newManifest.version}）未高于已安装版本（${oldManifest.version}）`)
+    // 允许同版本覆盖更新（插件版本自动跟随 app 版本，纯插件修复无法靠升版本号触发更新）；
+    // 仅拒绝降级（新版本 < 旧版本）。更新经 withPreservedFiles 保留 config.json/data.json，不丢配置。
+    if (compareVersion(newManifest.version, oldManifest.version) < 0) {
+      return fail(`新版本（${newManifest.version}）低于已安装版本（${oldManifest.version}），无法降级`)
     }
     const compat = checkCompatibility(newManifest)
     if (compat) return fail(`与当前客户端不兼容：${compat}`)
@@ -411,8 +413,10 @@ export class PluginManager {
     const target = join(this.pluginsDir, id)
     if (!existsSync(target)) return fail(`插件未安装：${id}，无法更新`)
     const oldManifest = readManifest(target)
-    if (compareVersion(manifest.version, oldManifest.version) <= 0) {
-      return fail(`新版本（${manifest.version}）未高于已安装版本（${oldManifest.version}）`)
+    // 允许同版本覆盖更新（插件版本自动跟随 app 版本，纯插件修复无法靠升版本号触发更新）；
+    // 仅拒绝降级（新版本 < 旧版本）。更新经 withPreservedFiles 保留 config.json/data.json，不丢配置。
+    if (compareVersion(manifest.version, oldManifest.version) < 0) {
+      return fail(`新版本（${manifest.version}）低于已安装版本（${oldManifest.version}），无法降级`)
     }
     const compat = checkCompatibility(manifest)
     if (compat) return fail(`与当前客户端不兼容：${compat}`)
