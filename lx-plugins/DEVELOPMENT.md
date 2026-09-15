@@ -500,11 +500,32 @@ await window.lx.plugins.listData.importAll(lists, 'love,user')
 
 ### 10.2 改动自检清单
 
-- [ ] `grep -rn "插件管理（侧边栏）\|设置 → 插件管理" lx-plugins src --include='*.md' --include='*.js' --include='*.ts' --include='*.vue'` —— 本文件、README 与插件源码里的路径描述是否仍然正确
+改完文档跑一遍（**前三条可直接复制执行**）：
+
+```bash
+# 1) 文档里的相对链接与页内锚点是否都还有效（0 失效才通过，脚本零依赖）
+node lx-plugins/tools/check-doc-links.js lx-plugins README.md
+
+# 2) 路径描述是否还正确（应只剩「插件管理（侧边栏）」这种新写法）
+grep -rn "插件管理（侧边栏）\|设置 → 插件管理" lx-plugins src --include='*.md' --include='*.js' --include='*.ts' --include='*.vue'
+
+# 3) 上游侵入点数量是否与文档一致
+grep -rnF '=== Plugin Manager ===' src
+```
+
+- [ ] 上面三条自检全部通过
 - [ ] 本文件的能力矩阵（[5.2](#52-能力矩阵哪些能力在哪端可用)）与 `src/plugins/host.ts` / `renderer.ts` 是否一致
 - [ ] 附录 A 是否补记了本次能力变化
 - [ ] `lx-plugins/*/README.md` 中受影响插件的说明是否已更新
-- [ ] 上游侵入点数量：`grep -rnF '=== Plugin Manager ===' src` 与实际是否一致
+
+> `lx-plugins/tools/check-doc-links.js` 的锚点算法已对齐 GitHub（**每个空格转一个连字符、不折叠**，点号/全角括号等标点整类删除）。
+> 所以标题与锚点的对应关系长这样，写锚点时照这个规则拼，别按「折叠空格」的直觉猜：
+>
+> ```text
+> ### 5.4 `api.patch` —— 运行时覆盖原功能
+>                     ↓
+> #54-apipatch--运行时覆盖原功能
+> ```
 
 ---
 

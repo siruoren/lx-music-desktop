@@ -23,6 +23,8 @@ lx-music-desktop 的**统一插件项目目录**。所有自研插件都以「�
 lx-plugins/
 ├── README.md                     本文件（索引）
 ├── DEVELOPMENT.md                插件开发指南（框架能力参考）
+├── tools/                        文档/构建辅助脚本（不用安装依赖）
+│   └── check-doc-links.js        校验本文档树里的相对链接与页内锚点
 ├── repo-source-plugins/          音乐源增强（远程自定义源批量导入 + 同源去重）
 ├── sock_proxy/                   SOCKS5 代理（含 Chromium 会话层，让播放也走代理）
 ├── forbidden_update/             禁用客户端「检查更新」
@@ -224,6 +226,7 @@ Pre-release 的命名规则：
 改完自查：
 
 ```bash
-grep -rnF '=== Plugin Manager ===' src                                    # 侵入点是否与文档一致
-grep -rn "插件管理（侧边栏）" lx-plugins src --include='*.md' --include='*.js' --include='*.ts' --include='*.vue'
+node lx-plugins/tools/check-doc-links.js lx-plugins README.md        # 相对链接与页内锚点是否都有效
+grep -rnF '=== Plugin Manager ===' src                               # 侵入点是否与文档一致
+grep -rn "插件管理（侧边栏）\|设置 → 插件管理" lx-plugins src --include='*.md' --include='*.js' --include='*.ts' --include='*.vue'
 ```
