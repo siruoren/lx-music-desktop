@@ -82,6 +82,16 @@ export default {
           enable: true,
           name: 'Setting',
         },
+        // === Plugin Manager === 插件管理入口（标题用字面量，避免动 20+ 个语言文件）
+        {
+          to: '/plugins',
+          tips: '插件管理',
+          icon: '#icon-plugin',
+          iconSize: '0 0 24 24',
+          size,
+          enable: true,
+          name: 'Plugins',
+        },
       ].filter(m => m.enable)
     })
     return {

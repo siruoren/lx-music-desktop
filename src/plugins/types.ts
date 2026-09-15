@@ -2,9 +2,11 @@
  * 插件系统 - 公共类型定义
  *
  * 该目录（src/plugins）为新增目录，不与上游任何文件冲突；后续合入 lx-music-desktop
- * 官方更新时，只需把本目录整体带入，并保证 5 个文件里带 `Plugin Manager` 标记的侵入点存在即可：
- *   src/main/index.ts、src/renderer/main.ts、src/renderer/views/Setting/index.vue、
- *   src/renderer/utils/musicSdk/index.js、src/renderer/utils/request.js
+ * 官方更新时，只需把本目录整体带入，并保证 6 处带 `Plugin Manager` 标记的侵入点存在即可：
+ *   src/main/index.ts、src/main/modules/winMain/main.ts、src/renderer/main.ts、
+ *   src/renderer/utils/musicSdk/index.js、src/renderer/utils/request.js、
+ *   插件管理 UI 入口（src/renderer/router.ts + components/layout/Aside/NavBar.vue + components/layout/Icons.vue，
+ *   页面体为 src/plugins/ui/Plugins.vue，内容组件 SettingPlugins.vue）
  *
  * 插件分发形态：
  *  - 单文件（推荐）：`.lxplugin`，清单内嵌于文件头的横幅注释，构建产物就是一个文件，
@@ -196,7 +198,7 @@ export interface RendererPluginApi extends PluginApi {
   /** 注销音乐源 */
   unregisterMusicSource: (id: string) => void
   /**
-   * 注册本插件的设置面板，会出现在「设置 → 插件管理」中该插件的「设置」按钮里。
+   * 注册本插件的设置面板，会出现在插件管理页（侧边栏「插件管理」）中该插件的「设置」按钮里。
    * 面板上的字段用声明式描述，由宿主渲染，插件无需自带 Vue 组件。
    */
   registerSettings: (spec: PluginSettingsSpec) => void

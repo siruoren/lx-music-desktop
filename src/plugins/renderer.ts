@@ -16,7 +16,9 @@
  *  - src/renderer/main.ts 中调用 initUserPlugins(app)
  *  - src/renderer/utils/musicSdk/index.js 中合并 window.lx.pluginMusicSources
  *  - src/renderer/utils/request.js 的 getRequestAgent 中查询 window.lx.pluginNetAgent（插件接管代理 agent）
- *  - src/renderer/views/Setting/index.vue 中挂上「插件管理」标签页（src/plugins/ui/SettingPlugins.vue）
+ *  - 插件管理 UI 入口（侧边栏「插件管理」，非设置标签页）：
+ *    src/renderer/router.ts 的 `/plugins` 路由、components/layout/Aside/NavBar.vue 的菜单项、
+ *    components/layout/Icons.vue 的 `#icon-plugin` 图标；页面体为 src/plugins/ui/Plugins.vue（内容 SettingPlugins.vue）
  */
 import { ipcRenderer } from 'electron'
 import musicSdk from '@renderer/utils/musicSdk'

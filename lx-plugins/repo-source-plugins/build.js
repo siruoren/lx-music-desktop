@@ -3,7 +3,7 @@
  * lx-plugins 插件构建脚本（零依赖，不需要 npm install）。
  *
  * 产物：**单个文件** —— `lx-plugins/<项目目录名>/dist/<项目目录名>.lxplugin`，
- * 在客户端「设置 → 插件管理」里上传（或拖拽）该文件即可安装 / 更新。
+ * 在客户端「插件管理（侧边栏）」里上传（或拖拽）该文件即可安装 / 更新。
  *
  * .lxplugin 的结构（见 src/plugins/format.ts）：
  *
