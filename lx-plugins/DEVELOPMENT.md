@@ -442,7 +442,7 @@ await window.lx.plugins.listData.importAll(lists, 'love,user')
 | 插件清单 version 格式非法 | 版本要形如 `1.0.0` |
 | main 必须是不含路径分隔符的 .js/.cjs 文件名 | 清单里别写 `./index.js` 或子目录 |
 | 插件已安装（id），请使用“更新”功能 | 同 id 目录已存在；先卸载，或用「上传新版本」 |
-| 新版本未高于已安装版本 | 见 [9.2](#92-已知缺陷--坑)：插件版本跟 app 版本走，同版本无法更新 |
+| 新版本低于已安装版本 | 仅拒绝降级；同版本现已允许覆盖更新（见 [9.2](#92-已知缺陷--坑) ②，更新保留 config） |
 | 状态「出错」+ 原因 | 通常是 `setup()` 抛错或入口有语法错误；按原因定位 |
 | 状态「不兼容」 | `engines.app` 与当前客户端版本不符 |
 | `require("x") 不支持` | main 端 `createRequire(入口)` 只能加载插件目录内文件 + node 内置模块；renderer 端需要主窗口的 `window.require` |
@@ -470,13 +470,13 @@ await window.lx.plugins.listData.importAll(lists, 'love,user')
 | # | 问题 | 规避方式 |
 | --- | --- | --- |
 | ① | **renderer 端插件更新不热替换**：`loadRendererPlugin()` 对已加载的 id 直接早退；且 `onUpdate` 只在 main 端被调用 | 更新后**禁用 → 启用**（会先 unload 再 load），或重启客户端 |
-| ② | **同版本插件无法「上传更新」**：管理器要求新版本 > 旧版本；而插件版本自动等于 app 版本 | 推 `beta` 分支让版本随 app 递增，或**卸载后重装**（⚠️ 卸载会删除插件目录，**`config.json` / `data.json` 一并丢失**） |
+| ② | （已修复）~~同版本插件无法「上传更新」~~：`src/plugins/manager.ts` 的 `applyUpdate`/`update` 已放宽为「仅拒绝降级（新版本 < 旧版本）」，同版本可覆盖更新；更新经 `withPreservedFiles` 保留 `config.json`/`data.json`，不丢配置 | 仍受 ① 影响：renderer 插件更新后需**禁用 → 启用**或重启才会生效 |
 | ③ | `api.unpatch(target, method)` **不传 `wrapper`** 时会移除该方法上的**全部**包装（含其它插件的），并使本插件其它 patch 失去追踪（卸载不回退） | **总是传 `wrapper`**：`api.unpatch(target, method, wrapper)` |
 | ④ | patch 对「已被提前取走引用的函数」无效 | 换切入点，或包装其调用方 |
 | ⑤ | 宿主无内置 `intercept` 拦截点 | 用 `api.patch`；需要协作点时可自行约定事件名 |
 | ⑥ | renderer 端 `getData/setData` 用 `localStorage`，**卸载不清理** | 需要清理就在 `uninstall()` 里显式覆盖 |
 
-> 修 ①②③ 会动到 `src/plugins/{renderer,manager,host}.ts`；改动后请同步更新本节与本文件的相关说明。
+> ①②③ 中 ② 已修复（`manager.ts` 版本门槛放宽为允许同版本覆盖更新，保留 config）；①③ 仍需手动规避。修这些缺陷会动到 `src/plugins/{renderer,manager,host}.ts`，改动后请同步更新本节与本文件的相关说明。
 
 ---
 

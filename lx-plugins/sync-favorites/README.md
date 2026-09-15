@@ -75,5 +75,4 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
 
 - **群晖 / WebDAV 路径约定**：群晖的 WebDAV 共享挂在根 `/` 下（如 `homes`、`photo`、`music`、`video`）。「远端目录」必须**以已存在的共享名开头**，例如 `homes/lx-music` 或 `photo/lx-music`；直接填 `lx-music/favorites` 这种不存在的顶层路径会被服务器以 HTTP 405 拒绝（不是插件 bug，是服务器不允许在该位置创建集合）。先用「浏览目录」从根下列出的共享里选一个即可。若服务器需要登录，请务必在「账号 / 密码」填好——未登录时部分服务器对 PROPFIND/PUT 也返回 405/403。
 - 「立即还原」/`both` 不再是无脑覆盖：冲突列表按「冲突策略」合并或覆盖，非冲突列表自动按各自改动合并，**不会无谓丢失一侧的收藏**。仍有风险（如策略选 `local`/`remote` 时，被覆盖一侧的该列表改动会丢失），故还原/双向前建议先「立即备份」一份本地数据。
-- 同版本插件无法走「上传更新」覆盖安装（app 版插件管理要求新版本 > 旧版本，详见 [`../DEVELOPMENT.md` 9.2](../DEVELOPMENT.md#92-已知缺陷--坑)），
-  改完代码后需推 `beta` 分支让版本号随 app 递增，或卸载重装（⚠️ 卸载会删掉插件目录，`config.json` / `data.json` 一并丢失）。
+- 同版本插件现已可走「上传更新」覆盖安装：插件管理版本门槛已放宽为「仅拒绝降级」（详见 [`../DEVELOPMENT.md` 9.2](../DEVELOPMENT.md#92-已知缺陷--坑) ②），更新会保留 `config.json` / `data.json`，不丢配置。注意 renderer 端插件更新后需**禁用 → 启用**或重启客户端才会生效（缺陷 ①）。
