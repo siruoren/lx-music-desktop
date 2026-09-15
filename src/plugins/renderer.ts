@@ -273,7 +273,7 @@ const listDataBridge = {
     // 未选中的类别：读回当前内容（overwriteListFull 会整体覆盖三类，必须回填以保持原样）
     const keepDefault = wantDefault ? [] : toRaw(await getListMusics(defaultList.id))
     const keepLove = wantLove ? [] : toRaw(await getListMusics(loveList.id))
-    const keepUser = wantUser ? [] : await Promise.all(toRaw(userLists).map(async (l) => {
+    const keepUser = wantUser ? [] : await Promise.all(toRaw(userLists).map(async(l) => {
       const raw = toRaw(l)
       return { ...raw, list: toRaw(await getListMusics(raw.id)) }
     }))
