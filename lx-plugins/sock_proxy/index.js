@@ -13,7 +13,7 @@
  *   是否接管**只取决于本插件自己的配置**（开关是否打开、地址是否填写），
  *   与 app「设置 → 网络」里那套 HTTP 代理配置相互独立、互不影响。
  *
- * 配置：全部在「设置 → 插件管理 → sock_proxy → 设置」中填写
+ * 配置：全部在「插件管理（侧边栏）→ sock_proxy → 设置」中填写
  * （启用开关 / 地址 / 端口 / 账户名 / 密码 / 远程 DNS），
  * 保存在插件目录的 config.json，下次启动客户端自动生效。
  * 账户名与密码都留空时按 RFC 1928 使用「无认证」方式（AUTH_NONE）。
@@ -475,7 +475,7 @@ function startBridge(socksOptsFactory, callback) {
 const TEST_TARGET = { host: 'www.baidu.com', port: 443 }
 
 /**
- * 默认配置。全部可在「设置 → 插件管理 → sock_proxy → 设置」中修改，
+ * 默认配置。全部可在「插件管理（侧边栏）→ sock_proxy → 设置」中修改，
  * 账户名与密码都留空时使用「无认证」方式（RFC 1928 AUTH_NONE）。
  */
 const DEFAULT_CONFIG = {

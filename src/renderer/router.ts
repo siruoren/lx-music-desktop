@@ -62,6 +62,15 @@ const router = createRouter({
         name: 'Setting',
       },
     },
+    // === Plugin Manager === 插件管理独立页面（侧边栏入口，UI 见 src/plugins/ui/Plugins.vue）
+    {
+      path: '/plugins',
+      name: 'Plugins',
+      component: require('../plugins/ui/Plugins.vue').default,
+      meta: {
+        name: 'Plugins',
+      },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/search' },
   ],
   linkActiveClass: 'active-link',

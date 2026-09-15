@@ -68,8 +68,6 @@ import SettingBackup from './components/SettingBackup.vue'
 import SettingOther from './components/SettingOther.vue'
 import SettingUpdate from './components/SettingUpdate.vue'
 import SettingAbout from './components/SettingAbout.vue'
-// === Plugin Manager ===
-import SettingPlugins from '../../../plugins/ui/SettingPlugins.vue'
 
 export default {
   name: 'Setting',
@@ -90,8 +88,6 @@ export default {
     SettingOther,
     SettingUpdate,
     SettingAbout,
-    // === Plugin Manager ===
-    SettingPlugins,
   },
   setup() {
     const t = useI18n()
@@ -117,8 +113,6 @@ export default {
         { id: 'SettingOther', title: t('setting__other') },
         { id: 'SettingUpdate', title: t('setting__update') },
         { id: 'SettingAbout', title: t('setting__about') },
-        // === Plugin Manager ===
-        { id: 'SettingPlugins', title: '插件管理' },
       ]
     })
 

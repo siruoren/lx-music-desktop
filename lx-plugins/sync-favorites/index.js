@@ -28,7 +28,7 @@ const tls = require('tls')
 const crypto = require('crypto')
 const { URL } = require('url')
 
-/** 默认配置（全部可在「设置 → 插件管理 → sync-favorites → 设置」中修改） */
+/** 默认配置（全部可在「插件管理（侧边栏）→ sync-favorites → 设置」中修改） */
 const DEFAULT_CONFIG = {
   /** 同步协议：webdav / ftp */
   type: 'webdav',

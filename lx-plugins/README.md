@@ -1,7 +1,7 @@
 # lx-plugins
 
 lx-music-desktop 的**统一插件项目目录**。所有自研插件都以「一个子目录 = 一个插件项目」的形式放在这里，
-每个项目构建出的产物都是**单个文件**（`.lxplugin`），可直接在客户端的「设置 → 插件管理」里上传安装 / 更新。
+每个项目构建出的产物都是**单个文件**（`.lxplugin`），可直接在客户端侧边栏的「插件管理」里上传安装 / 更新。
 
 > 插件**运行时**（宿主、管理器、加载器、管理界面、函数包装器等）位于 [`src/plugins`](../src/plugins)，
 > 会随主程序一起打包。本目录只是插件**源码与构建**目录，不参与主程序打包。
@@ -114,7 +114,7 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 
 ## 与上游代码的合并关系
 
-插件系统对上游源码只有 **6 处**带 `Plugin Manager` 标记的极小改动：
+插件系统对上游源码只有 **6 处**带 `Plugin Manager` 标记的极小改动（插件管理 UI 入口涉及 3 个文件，故实际改动文件为 8 个）：
 
 | 文件 | 改动 |
 | --- | --- |
@@ -123,10 +123,10 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 | `src/renderer/utils/musicSdk/index.js` | 调用时合并插件注册的音乐源 |
 | `src/renderer/utils/request.js` | `getRequestAgent` 中查询 `window.lx.pluginNetAgent`，允许插件接管代理 agent |
 | `src/main/modules/winMain/main.ts` | 应用会话代理前先问插件系统（`resolveSessionProxyRules`），使插件接管能作用于「播放」 |
-| `src/renderer/views/Setting/index.vue` | 新增「插件管理」标签页 |
+| `src/renderer/router.ts`<br>`components/layout/Aside/NavBar.vue`<br>`components/layout/Icons.vue` | 插件管理 UI 入口：`/plugins` 路由、侧边栏菜单项（在「设置」下方）与 `#icon-plugin` 图标 |
 
 其余全部是本目录与 `src/plugins/` 下的**新增文件**，合入上游更新时不会冲突：
-同步上游后只需保证上述 6 处标记仍在即可。这 6 处使用**完全一致的标记文本**，一条命令即可全部定位：
+同步上游后只需保证上述标记仍在即可。这些改动使用**完全一致的标记文本**，一条命令即可全部定位：
 
 ```bash
 grep -rnF '=== Plugin Manager ===' src
@@ -185,7 +185,7 @@ Pre-release 的命名规则：
 > **原生不支持 WebDAV / FTP**。本插件补上这条最通用的同步通道，可与群晖 Drive、Nextcloud、坚果云、
 > 自建 FTP 等任意支持 WebDAV / FTP 的服务搭配。
 
-### 配置项（设置 → 插件管理 → 我的列表同步 → 设置）
+### 配置项（插件管理 → 我的列表同步 → 设置）
 
 | 配置 | 说明 |
 | --- | --- |
