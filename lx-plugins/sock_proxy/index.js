@@ -474,8 +474,21 @@ let teardownSessionProxy = null
 
 module.exports = {
   setup(api) {
+    // 启动诊断：main 端把关键里程碑追加到插件目录 boot-debug.log（GUI 启动时
+    // console 输出不可见，用文件才能排查「桥为什么没起来」这类问题）
+    const bootLog = (msg) => {
+      if (api.platform !== 'main') return
+      try {
+        require('fs').appendFileSync(
+          require('path').join(typeof __dirname === 'string' ? __dirname : '.', 'boot-debug.log'),
+          `${new Date().toISOString()} [pid:${process.pid}] ${msg}\n`,
+        )
+      } catch { /* 诊断失败不影响功能 */ }
+    }
+    bootLog(`setup 进入（platform=${api.platform}，setSessionProxy=${typeof api.setSessionProxy}）`)
     const lx = api.app
     if (!lx) {
+      bootLog('未拿到 window.lx，提前返回')
       api.logger.warn('未拿到 window.lx，插件无法接管代理 agent')
       return
     }
@@ -550,24 +563,32 @@ module.exports = {
      * 宿主未提供 api.setSessionProxy（老宿主）时静默跳过，插件仍能接管 Node 请求。
      */
     const applySessionProxy = () => {
-      if (typeof api.setSessionProxy !== 'function') return
+      if (typeof api.setSessionProxy !== 'function') {
+        bootLog('applySessionProxy：宿主未提供 setSessionProxy，跳过')
+        return
+      }
+      bootLog(`applySessionProxy：enable=${config.enable} host=${config.host} port=${proxyPortOf()}`)
       if (!config.enable || !config.host) {
         stopBridge()
         sessionProxyRules = ''
         api.setSessionProxy(null)
+        bootLog('applySessionProxy：未启用/未填地址 → 已撤销会话代理')
         return
       }
       stopBridge()
       sessionProxyRules = ''
       api.setSessionProxy(null)
+      bootLog('applySessionProxy：正在启动本地桥…')
       const generation = bridgeGeneration
       startBridge(() => socksOpts(), (err, handle) => {
         if (generation !== bridgeGeneration) {
           // 期间配置又变了，丢弃这次结果
+          bootLog(`applySessionProxy：桥启动完成但代际已过期（gen=${generation}），丢弃`)
           if (handle) { try { handle.close() } catch { /* noop */ } }
           return
         }
         if (err) {
+          bootLog(`applySessionProxy：桥启动失败 → 回退 socks5://（${err.message}）`)
           sessionProxyRules = `socks5://${config.host}:${proxyPortOf()}`
           api.setSessionProxy(sessionProxyRules)
           status = describe()
@@ -578,6 +599,7 @@ module.exports = {
         sessionProxyRules = `http://127.0.0.1:${handle.port}`
         api.setSessionProxy(sessionProxyRules)
         status = describe()
+        bootLog(`applySessionProxy：桥已启动 127.0.0.1:${handle.port} → 会话代理已声明`)
       })
     }
 
@@ -678,7 +700,13 @@ module.exports = {
     // 启用后立刻接管；未启用时保持 window.lx.pluginNetAgent 原状（默认 null）
     if (isRenderer && config.enable && config.host) lx.pluginNetAgent = provider
     // 会话代理：让播放、封面等由 Chromium 直接发起的请求也走 SOCKS5
-    applySessionProxy()
+    try {
+      applySessionProxy()
+    } catch (err) {
+      bootLog(`applySessionProxy 抛错：${err && err.stack || err}`)
+      throw err
+    }
+    bootLog('setup 完成')
 
     // ---- 声明式设置面板（宿主统一渲染，配置保存到插件目录 config.json）----
     if (api.registerSettings) {
