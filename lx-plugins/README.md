@@ -102,9 +102,12 @@ node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输�
 > ⚠️ `sock_proxy` 因此声明为 `"platforms": ["main", "renderer"]`：renderer 端接管 Node 请求，
 > main 端接管会话代理。**只声明 renderer 端时播放不会走代理**。
 >
-> 另注：Chromium 的 `session.setProxy` 支持 `socks5://host:port`，但**不支持带用户名/密码的
-> SOCKS5**（URL 里的凭据会被静默忽略）。`sock_proxy` 需要认证时会在 main 端起一个只监听
-> `127.0.0.1` 的本地 HTTP 桥，自己完成 RFC1929 认证后再转发。
+> 另注：`sock_proxy` 在 main 端起一个只监听 `127.0.0.1` 的本地 HTTP 桥，会话层**一律**
+> 经它转发（不直接用 Chromium 原生 `socks5://`），原因有二：
+>  1. Chromium 对 SOCKS5 代理会在**本地解析 DNS**（远程 DNS 不生效），本地解析不了/被污染
+>     的域名播放就会失败 —— HTTP 桥的 CONNECT 会把域名原样交给代理解析，正好绕开；
+>  2. Chromium 不支持带用户名/密码的 SOCKS5（URL 里的凭据会被静默忽略），认证统一在桥里
+>     完成（RFC1929）。
 >
 > 未覆盖：下载任务有独立的 agent 构造（`src/common/utils/download/util.ts`，运行在 download
 > worker 中、拿不到 `window.lx`）。

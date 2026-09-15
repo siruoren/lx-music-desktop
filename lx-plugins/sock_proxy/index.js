@@ -23,11 +23,12 @@
  *     歌单 / 歌词 / 评论 / 榜单 / 热词等。通过接管点 `window.lx.pluginNetAgent` 生效。
  *  2. **Chromium 会话层** —— `<audio>` / `<img>` 等由 Chromium 直接发起的请求，
  *     即**音乐播放**与封面加载。它们不经过 request.js，因此必须把代理设到 BrowserWindow
- *     的会话上（`api.setSessionProxy`）：
- *       · 代理不需要认证 → 直接用 Chromium 原生 `socks5://host:port`；
- *       · 需要用户名/密码 → Chromium 会**静默忽略** SOCKS URL 里的凭据，因此改为起一个
- *         只监听 127.0.0.1 的本地 HTTP 桥，由插件自己完成 RFC1929 认证后再转发。
- *     只做第 1 层时会出现「测试通过、接口生效，但播放依然直连」的现象。
+ *     的会话上（`api.setSessionProxy`）。会话层**一律通过本地 HTTP 桥**转发：
+ *       · Chromium 对 `socks5://` 代理会在**本地解析 DNS**（远程 DNS 不生效），本地解析
+ *         不了/被污染的域名播放就会失败 —— 而 HTTP 代理的 CONNECT 会把域名原样交给
+ *         代理端解析，正好绕开这个限制；
+ *       · Chromium 还会静默忽略 SOCKS URL 里的用户名/密码，桥里一并完成 RFC1929 认证。
+ *     只做第 1 层时会出现「测试通过、接口生效，但播放依然直连/失败」的现象。
  *
  * 未覆盖：下载任务另有一份独立的 agent 构造（`src/common/utils/download/util.ts`，
  * 运行在 download worker 中、且 worker 里拿不到 window.lx），详见 README「覆盖范围」。
@@ -309,11 +310,13 @@ const Socks5HttpsAgent = createSocksAgentClass(https.Agent, true)
 /**
  * 起一个只监听 127.0.0.1 的 HTTP 代理，把请求经 SOCKS5 隧道转发出去。
  *
- * 为什么需要它：Chromium 的 `session.setProxy()` 能直接用 `socks5://host:port`，
- * 但**不支持带用户名/密码认证的 SOCKS5** —— URL 里的凭据会被静默忽略，连接因此
- * 认证失败（参见 electron-session-proxy / electron-viasocks 等项目的说明）。
- * 所以需要认证时，由本插件自己完成 RFC1929 认证，再向 Chromium 暴露一个普通的
- * `http://127.0.0.1:<随机端口>` 代理。
+ * 会话层（音乐播放/封面）**一律**经过它，而不是直接给 Chromium 配 `socks5://`：
+ *  1. Chromium 对 SOCKS5 代理会在本地解析 DNS（远程 DNS 不生效），本地解析不了/被污染
+ *     的域名播放就会失败；HTTP 代理的 CONNECT 会把域名原样交给本桥，由桥按 remoteDns
+ *     转发，域名始终由代理端解析；
+ *  2. Chromium 不支持带用户名/密码认证的 SOCKS5 —— URL 里的凭据会被静默忽略（参见
+ *     electron-session-proxy / electron-viasocks 等项目的说明），认证由本桥完成。
+ * 向 Chromium 暴露的是一个普通的 `http://127.0.0.1:<随机端口>` 代理。
  *
  * 处理 Chromium 走 HTTP 代理时的两种请求形态：
  *   - `CONNECT host:port`（https 目标）→ 建隧道后原样双向转发；
@@ -404,7 +407,9 @@ function createBridge(socksOptsFactory) {
 
   const server = http.createServer(onRequest)
   server.on('connect', onConnect)
-  server.on('clientError', (err, socket) => { try { socket.destroy() } catch { /* noop */ } })
+  server.on('clientError', (_err, socket) => {
+    try { socket.destroy() } catch { /* noop */ }
+  })
 
   let closed = false
   const close = () => {
@@ -487,7 +492,7 @@ module.exports = {
     let warnedConflict = false
     /** 最近一次运行状态，显示在设置面板上 */
     let status = ''
-    /** 需要认证时使用的本地 HTTP 桥（Chromium 不支持带凭据的 SOCKS URL） */
+    /** 会话层（播放/封面）转发用的本地 HTTP 桥（始终使用，见 applySessionProxy 注释） */
     let bridge = null
     /** 桥的代际号：配置快速变化时丢弃过期的启动结果 */
     let bridgeGeneration = 0
@@ -506,8 +511,7 @@ module.exports = {
       // 会话层（音乐播放 / 封面）由 main 端负责：能拿到桥端口就报出来；
       // 拿不到（renderer 端的设置面板）就说明「由主进程建立」，别误报成「未就绪」。
       let playback
-      if (!hasAuth()) playback = 'Chromium 原生 SOCKS5'
-      else if (bridge) playback = `本地桥 127.0.0.1:${bridge.port}`
+      if (bridge) playback = `本地桥 127.0.0.1:${bridge.port}（域名由代理解析）`
       else playback = typeof api.setSessionProxy === 'function' ? '本地桥启动中…' : '本地桥（由主进程建立）'
       return `已接管：SOCKS5 ${config.host}:${proxyPortOf()}（${dns} DNS，${auth}）；播放层 ${playback}`
     }
@@ -534,10 +538,14 @@ module.exports = {
      * 应用「会话代理」：让 <audio>/<img> 等由 Chromium 直接发起的请求（音乐播放、封面）
      * 也走 SOCKS5。
      *
-     * 两条路径：
-     *  - 无认证：直接让 Chromium 用原生 `socks5://host:port`（性能最好）；
-     *  - 需要认证：Chromium 会静默忽略 SOCKS URL 里的凭据，因此改用一个只监听
-     *    127.0.0.1 的本地 HTTP 桥，由插件自己完成认证后再转发。
+     * 一律通过本地 HTTP 桥转发（`http://127.0.0.1:<随机端口>`），不直接用 Chromium 原生的
+     * `socks5://`，原因有二：
+     *  1. Chromium 对 SOCKS5 代理会在**本地解析 DNS**（不像 curl 的 socks5h），本地解析
+     *     不了/被污染的域名播放就会失败，而 Node 层（remoteDns）却正常 —— 正是
+     *     「菜单能走代理、播放不行」的根因。HTTP 代理的 CONNECT 会把域名原样交给桥，
+     *     由桥按 remoteDns 设置转发，域名始终由代理端解析；
+     *  2. Chromium 会静默忽略 SOCKS URL 里的用户名/密码，认证统一在桥里完成。
+     * 桥启动失败（极端情况）才退回 Chromium 原生 `socks5://`，聊胜于无。
      *
      * 宿主未提供 api.setSessionProxy（老宿主）时静默跳过，插件仍能接管 Node 请求。
      */
@@ -549,13 +557,6 @@ module.exports = {
         api.setSessionProxy(null)
         return
       }
-      if (!hasAuth()) {
-        stopBridge()
-        sessionProxyRules = `socks5://${config.host}:${proxyPortOf()}`
-        api.setSessionProxy(sessionProxyRules)
-        return
-      }
-      // 需要认证：重启本地桥（配置可能已变），启动成功后把会话指向它
       stopBridge()
       sessionProxyRules = ''
       api.setSessionProxy(null)
@@ -567,8 +568,10 @@ module.exports = {
           return
         }
         if (err) {
-          api.logger.error('启动本地桥失败，播放将不走代理：', err.message)
-          status = `本地桥启动失败：${err.message}`
+          sessionProxyRules = `socks5://${config.host}:${proxyPortOf()}`
+          api.setSessionProxy(sessionProxyRules)
+          status = describe()
+          api.logger.error('启动本地桥失败，已退回 Chromium 原生 SOCKS5（该模式本地解析 DNS、不支持认证）：', err.message)
           return
         }
         bridge = handle
@@ -688,7 +691,10 @@ module.exports = {
           { type: 'text', key: 'username', label: '账户名', placeholder: '留空表示不需要认证', default: '' },
           { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要认证', default: '' },
           {
-            type: 'switch', key: 'remoteDns', label: '远程 DNS（由代理解析域名）', default: true,
+            type: 'switch',
+            key: 'remoteDns',
+            label: '远程 DNS（由代理解析域名）',
+            default: true,
             tip: '建议开启：避免本地 DNS 泄漏，也能解析本地被污染或不可达的域名。',
           },
           { type: 'divider' },
