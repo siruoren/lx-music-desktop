@@ -6,14 +6,16 @@
  *      列表文件是纯文本，每行一个自定义源 js 的地址（以 # 或 // 开头的行会被忽略）。
  *   2. 点「立即导入 / 更新」即从列表文件里逐行取出 js 地址并批量导入到客户端的
  *      「自定义源」中 —— 因此它们会出现在 设置 → 基本设置 → 自定义源 列表里，可以勾选。
- *   3. 开启「自动更新」后，每次启动客户端都会重新拉取列表并更新已导入的源；
- *      勾选项后面会显示最近一次更新的时间。
+ *   3. 每次启动客户端都会在**后台异步**更新已导入的源（不阻塞界面，无需手动操作），
+ *      更新结果会显示在插件设置面板里。
  *   4. 已导入的源记录在本插件自己的账本里，配置与账本都保存在**插件目录**的
  *      config.json（<插件目录>/config.json），与 app 自身设置完全隔离。
  *
  *   实现要点：客户端「自定义源」的导入接口每次都会生成新的源 id，无法原地覆盖，
- *   所以更新某个源时是「先移除旧 id、再导入新内容」；若该源原本处于被选中状态，
- *   会自动把选中项切到新 id，避免用户的勾选被清掉。
+ *   所以「更新」=「先删除本地同名源、再导入新内容」。匹配按**源名称**（脚本头
+ *   @name，与本地列表条目名一致）进行：本地已存在的同名源直接覆盖（原来处于
+ *   勾选状态则自动把勾选切到新条目），不存在的才新增导入；脚本内容与上次一致
+ *   时跳过不动，本地条目与其勾选状态原样保留。
  *
  * 二、搜索结果增强（可开关）
  *   包装 musicSdk.searchMusic，对同一个音乐源内部的重复条目做稳定去重。
@@ -214,7 +216,15 @@ module.exports = {
       return (plugins && plugins.userApi) || null
     }
 
-    /** 导入 / 更新列表文件里的全部远程源 */
+    /**
+     * 导入 / 更新列表文件里的全部远程源。
+     * 匹配规则：按「源名称」（脚本头 @name，与本地「自定义源」列表条目名一致）比对 ——
+     *   - 本地已存在同名源 → 覆盖更新（先删本地同名旧条目再导入；若原来处于勾选状态，
+     *     导入后自动把勾选切到新条目）；
+     *   - 本地不存在 → 新增导入；
+     *   - 脚本内容与上次一致（hash 相同且本地同名条目就是上次导入的那个）→ 跳过不动，
+     *     本地条目与其勾选状态原样保留。
+     */
     const updateAll = async(reason) => {
       if (running) return
       const userApi = bridge()
@@ -239,11 +249,17 @@ module.exports = {
           return
         }
         const prevMap = new Map(state.sources.map(item => [item.url, item]))
+        // 本地「自定义源」按名称建索引：同名即视为同一个源（无论是否本插件导入）
+        const nameMap = new Map()
+        for (const local of (userApi.list() || [])) {
+          if (local && local.id && local.name && !nameMap.has(local.name)) nameMap.set(local.name, local)
+        }
         const now = Date.now()
         const lines = []
         const next = []
-        let imported = 0
-        let unchanged = 0
+        let updated = 0
+        let added = 0
+        let kept = 0
         let failed = 0
 
         for (const url of urls) {
@@ -257,40 +273,70 @@ module.exports = {
             const hash = hashOf(script)
             const name = readScriptInfo(script, 'name') || prev?.name || url
             const version = readScriptInfo(script, 'version')
+            const local = nameMap.get(name)
 
-            // 内容没变且源还在 → 不动它（避免每次启动都重建，导致选中项丢失）
-            const stillThere = prev && prev.apiId && (userApi.list() || []).some(item => item.id === prev.apiId)
-            if (prev && prev.hash === hash && stillThere) {
-              unchanged++
-              next.push({ ...prev, name, version })
-              lines.push(`未变化：${name}`)
+            // 内容与上次一致、且本地同名条目就是上次导入的那个 → 无需重新导入
+            //（id 不变，用户的勾选等状态原样保留）；但若本地还有同名的其他条目
+            //（如用户手动导入过的重复项），顺手清掉，只保留本插件导入的那一个。
+            if (local && prev && prev.apiId === local.id && prev.hash === hash) {
+              kept++
+              const dupIds = []
+              for (const item of (userApi.list() || [])) {
+                if (item && item.id && item.name === name && item.id !== prev.apiId) dupIds.push(item.id)
+              }
+              if (dupIds.length) {
+                const activeOnDup = dupIds.includes(userApi.getActiveId())
+                try {
+                  await userApi.remove(dupIds)
+                  if (activeOnDup) userApi.setActiveId(prev.apiId)
+                } catch (err) {
+                  api.logger.warn(`清理同名重复源失败（${name}）：`, err)
+                }
+              }
+              next.push(prev)
+              lines.push(`未变化，跳过：${name}${version ? ` v${version}` : ''}`)
               continue
             }
 
-            // 客户端导入接口每次都生成新 id，无法原地覆盖 → 先移除旧的
-            const wasActive = !!(prev && prev.apiId && userApi.getActiveId() === prev.apiId)
-            if (prev && prev.apiId) {
-              try {
-                await userApi.remove([prev.apiId])
-              } catch (err) {
-                api.logger.warn(`移除旧源失败（${prev.name || url}）：`, err)
+            if (local) {
+              // 本地已存在同名源 → 覆盖更新：删掉全部同名旧条目后重新导入；
+              // 若其中正好是被勾选（选中）的那个，导入后把勾选切到新条目。
+              const idsToRemove = new Set()
+              for (const item of (userApi.list() || [])) {
+                if (item && item.id && item.name === name) idsToRemove.add(item.id)
               }
-            }
-
-            const res = await userApi.importScript(script)
-            if (!res.success) throw new Error(res.message || '导入失败')
-            const apiId = (res.apiInfo && res.apiInfo.id) || ''
-            // 原来处于选中状态 → 把选中项切到新 id，保留用户的勾选
-            if (wasActive && apiId) {
-              try {
-                userApi.setActiveId(apiId)
-              } catch (err) {
-                api.logger.warn('恢复自定义源选中项失败：', err)
+              const wasActive = idsToRemove.has(userApi.getActiveId())
+              if (idsToRemove.size) {
+                try {
+                  await userApi.remove([...idsToRemove])
+                } catch (err) {
+                  api.logger.warn(`移除本地已有源失败（${name}）：`, err)
+                }
               }
+              const res = await userApi.importScript(script)
+              if (!res.success) throw new Error(res.message || '导入失败')
+              const apiId = (res.apiInfo && res.apiInfo.id) || ''
+              if (wasActive && apiId) {
+                try {
+                  userApi.setActiveId(apiId)
+                } catch (err) {
+                  api.logger.warn('恢复自定义源勾选项失败：', err)
+                }
+              }
+              updated++
+              next.push({ url, apiId, name, version, hash, updatedAt: now })
+              nameMap.set(name, { id: apiId, name })
+              lines.push(`已更新（覆盖本地同名源）：${name}${version ? ` v${version}` : ''}`)
+            } else {
+              // 本地不存在 → 新增导入
+              const res = await userApi.importScript(script)
+              if (!res.success) throw new Error(res.message || '导入失败')
+              const apiId = (res.apiInfo && res.apiInfo.id) || ''
+              added++
+              next.push({ url, apiId, name, version, hash, updatedAt: now })
+              nameMap.set(name, { id: apiId, name })
+              lines.push(`新增导入：${name}${version ? ` v${version}` : ''}`)
             }
-            imported++
-            next.push({ url, apiId, name, version, hash, updatedAt: now })
-            lines.push(`${wasActive ? '已更新（并保持选中）' : '已更新'}：${name}${version ? ` v${version}` : ''}`)
           } catch (err) {
             failed++
             if (prev) next.push(prev)
@@ -306,9 +352,9 @@ module.exports = {
         state.sources = next
         state.lastUpdateAt = now
         state.lastResult =
-          `${reason}完成（${formatTime(now)}）：更新 ${imported} 个、未变化 ${unchanged} 个、失败 ${failed} 个\n` +
+          `${reason}完成（${formatTime(now)}）：更新 ${updated}、新增 ${added}、未变化 ${kept}、失败 ${failed}\n` +
           lines.join('\n')
-        api.logger.info(`远程自定义源更新完成：更新 ${imported}、未变化 ${unchanged}、失败 ${failed}`)
+        api.logger.info(`远程自定义源更新完成：更新 ${updated}、新增 ${added}、未变化 ${kept}、失败 ${failed}`)
       } catch (err) {
         state.lastResult = `更新失败（${formatTime(Date.now())}）：${err.message}`
         api.logger.error('更新远程自定义源失败：', err)
@@ -366,7 +412,7 @@ module.exports = {
             label: '自动更新',
             default: true,
             suffix: () => (state.lastUpdateAt ? `上次更新：${formatTime(state.lastUpdateAt)}` : '尚未更新过'),
-            tip: '开启后每次启动客户端都会重新拉取列表并更新已导入的源。',
+            tip: '开启后每次启动客户端都会在后台异步重新拉取列表并更新已导入的源（同名覆盖、新地址新增，勾选状态自动保留）。',
           },
           {
             type: 'buttons',

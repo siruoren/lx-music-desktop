@@ -158,6 +158,6 @@ module.exports = {
   },
 
   onUpdate(oldVersion) {
-    console.log(`[plugin:forbidden_update] 已从 v${oldVersion} 更新到 v1.0.0`)
+    console.log(`[plugin:forbidden_update] 已从 v${oldVersion} 更新（插件版本自动与 app 保持一致）`)
   },
 }

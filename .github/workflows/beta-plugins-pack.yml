@@ -3,7 +3,7 @@ name: Build Beta
 on:
   push:
     branches:
-      - beta
+      - beta_plugins
 
 env:
   IS_CI: 'true'
