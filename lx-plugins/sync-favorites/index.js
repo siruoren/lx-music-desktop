@@ -299,24 +299,35 @@ function makeRequest(urlStr, options) {
   })
 }
 
-/** 逐级 MKCOL 创建远端父目录；返回创建过程中出现的「非预期」错误（已存在/可接受的状态不计入），
- *  避免目录没建出来却被静默吞掉、导致后续 PUT 莫名失败。 */
-async function ensureParentDirs(fileUrl, auth, insecure, timeout) {
+/** 从一个文件 URL 解析出「需逐级创建的父目录 URL 列表」（用于 MKCOL 建多层级目录）。
+ *  例：http://h:5505/lx-music/favorites/lx_favorites.json
+ *    → ['http://h:5505/lx-music/', 'http://h:5505/lx-music/favorites/'] */
+function parentDirUrls(fileUrl) {
   const u = new URL(fileUrl)
   const segs = u.pathname.split('/').filter(Boolean)
   segs.pop() // 去掉文件名
+  const urls = []
   let acc = u.origin
-  const errors = []
   for (const s of segs) {
     acc += '/' + s
+    urls.push(acc + '/')
+  }
+  return urls
+}
+
+/** 逐级 MKCOL 创建远端父目录；返回创建过程中出现的「非预期」错误（已存在/可接受的状态不计入），
+ *  避免目录没建出来却被静默吞掉、导致后续 PUT 莫名失败。 */
+async function ensureParentDirs(fileUrl, auth, insecure, timeout) {
+  const errors = []
+  for (const dirUrl of parentDirUrls(fileUrl)) {
     try {
-      const res = await makeRequest(acc + '/', { method: 'MKCOL', auth, secure: insecure ? false : undefined, timeout })
+      const res = await makeRequest(dirUrl, { method: 'MKCOL', auth, secure: insecure ? false : undefined, timeout })
       // 201 创建 / 204 / 301·302 重定向 / 405 已存在 / 409 冲突(已存在) / 207 多状态 → 视为可接受
       if (![201, 204, 301, 302, 405, 409, 207].includes(res.status)) {
-        errors.push(`${acc}/ → HTTP ${res.status}`)
+        errors.push(`${dirUrl} → HTTP ${res.status}`)
       }
     } catch (e) {
-      errors.push(`${acc}/ → ${e.message}`)
+      errors.push(`${dirUrl} → ${e.message}`)
     }
   }
   return errors
@@ -1135,29 +1146,45 @@ function browseTargetDir(cfg) {
   return { dir: parent, label: parent }
 }
 
-/** 浏览远端目录：列出连接地址/远端目录下的内容，返回可读文本 */
+/** 把目录项渲染为可读文本（目录在前） */
+function formatListing(entries, label, note) {
+  const sorted = entries.slice().sort((a, b) => (Number(b.isDir) - Number(a.isDir)) || String(a.name).localeCompare(String(b.name)))
+  const lines = sorted.map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
+  const body = entries.length ? `目录下共 ${entries.length} 项（目录在前）：\n` + lines.join('\n') : '（空目录）'
+  return `「${label}」${note ? '\n' + note : ''}\n${body}`
+}
+
+/** 浏览远端目录：列出连接地址/远端目录下的内容，返回可读文本；列不出时给出可操作诊断 */
 async function browseDir(api, cfg) {
   const client = buildClient(cfg)
   const { dir, label } = browseTargetDir(cfg)
-  let entries
   try {
-    entries = await client.listDir(dir)
+    const entries = await client.listDir(dir)
+    return formatListing(entries, label, '')
   } catch (e) {
-    // 目录不存在时回退到父目录（便于参照现有结构配置目标目录）
+    // 列不出：先回退到父目录（路径不存在时便于参照现有结构）
     try {
       const parentDir = String(dir || '').replace(/\/[^/]*\/?$/, '') || ''
       const up = await client.listDir(parentDir)
-      entries = up
-      api.logger.warn('sync-favorites 浏览目录回退到父目录：', e.message)
-    } catch (_) {
-      throw e
+      return formatListing(up, parentDir, `（您填的「${label}」无法列出，已回退到父目录，请对照填写远端目录）`)
+    } catch (_) { /* 父目录也失败 → 进入 WebDAV 能力诊断 */ }
+    // WebDAV：用 OPTIONS 探测该地址是否真的是 WebDAV，区分「不是 WebDAV」与「路径不对」
+    if (typeof client.options === 'function') {
+      try {
+        const probeUrl = (typeof dir === 'string' && dir) ? dir : (String(cfg.host || '').replace(/\/+$/, '') + '/')
+        const opt = await client.options(probeUrl)
+        const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
+        if (looksDav) {
+          throw new Error(`该地址是 WebDAV，但您填的路径「${label}」列不出（${e.message}）。请检查远端目录是否拼写正确、是否确实存在。`)
+        }
+        throw new Error(`无法列出目录（${e.message}）。该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点，例如：群晖 https://IP/webdav、Nextcloud https://域名/remote.php/dav/files/用户名/，并检查端口与账号密码。`)
+      } catch (probeErr) {
+        if (/WebDAV/.test(probeErr.message)) throw probeErr
+        throw new Error(`无法列出目录（${e.message}）；探测 WebDAV 能力也失败：${probeErr.message}`)
+      }
     }
+    throw new Error(`无法列出目录：${e.message}`)
   }
-  const lines = entries.map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
-  const summary = entries.length
-    ? `目录下共 ${entries.length} 项（目录在前）：\n` + lines.join('\n')
-    : '（空目录）'
-  return `「${label}」\n${summary}`
 }
 
 /** 连接测试：在目标目录放一个临时文件并回读，再删除；失败时探测 WebDAV 能力并给出可操作提示 */
@@ -1220,6 +1247,8 @@ module.exports = {
     testConnection,
     browseDir,
     browseTargetDir,
+    parentDirUrls,
+    formatListing,
     parseDavListing,
     parseMlsd,
     parseUnixList,

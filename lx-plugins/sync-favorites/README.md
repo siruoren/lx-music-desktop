@@ -12,7 +12,7 @@
 | 端 | `renderer` |
 | 应用最低版本 | `>=2.0.0` |
 | 入口 | [`index.js`](./index.js) |
-| 产物 | `dist/sync-favorites.lxplugin` |
+| 产物 | `dist/sync-favorites-<版本>.lxplugin`（版本 = app 版本，如 `sync-favorites-2.12.5.lxplugin`） |
 
 ## 安装与构建
 
@@ -20,7 +20,7 @@
 node lx-plugins/repo-source-plugins/build.js sync-favorites
 ```
 
-产物是单个文件 `lx-plugins/sync-favorites/dist/sync-favorites.lxplugin`，在客户端侧边栏「插件管理」里
+产物是单个文件 `lx-plugins/sync-favorites/dist/sync-favorites-<版本>.lxplugin`（版本 = app 版本），在客户端侧边栏「插件管理」里
 上传安装 / 更新；开发期也可用「安装插件目录（本地开发）」直接选本目录。构建与安装的通用说明见
 [`../README.md`](../README.md)，插件 API 细节见 [`../DEVELOPMENT.md`](../DEVELOPMENT.md)。
 

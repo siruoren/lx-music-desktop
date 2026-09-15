@@ -29,7 +29,7 @@ mkdir lx-plugins/hello && cd lx-plugins/hello
 
 # 4) 构建（零依赖，不需要 npm install）
 cd ../.. && node lx-plugins/repo-source-plugins/build.js hello
-# 产物：lx-plugins/hello/dist/hello.lxplugin
+# 产物：lx-plugins/hello/dist/hello-<app 版本>.lxplugin   例如 hello-2.12.5.lxplugin
 #（npm run build:plugin 等价于 build.js --all，会构建全部插件项目）
 ```
 
@@ -136,6 +136,7 @@ cd ../.. && node lx-plugins/repo-source-plugins/build.js hello
 构建脚本从**仓库根 `package.json`** 读 `version` 并注入产物横幅，`plugin.json` 里写的 `version` 会被忽略（不一致时会打提示）。所以：
 
 - **不需要**发版时逐个改插件版本号；
+- 产物文件名也带这个版本号（`<插件名>-<版本>.lxplugin`，如 `sock_proxy-2.12.5.lxplugin`）；
 - 反过来说：**同一次 app 版本下，插件的版本号不会变**，这会直接影响「更新」的判定（见 [9.2](#92-已知缺陷--坑)）。
 
 ---
@@ -535,6 +536,7 @@ grep -rnF '=== Plugin Manager ===' src
 
 | 时间 | 变化 | 关联提交 |
 | --- | --- | --- |
+| 2026-09-15 | 构建产物名改为带版本号（`<插件名>-<版本>.lxplugin`）；构建前自动清理该项目在输出目录里的旧产物；CI 改用 `dist/*.lxplugin` 通配收集，快速通道先把非本版本的插件附件删掉 | 本次改动 |
 | 2026-09-15 | 插件管理入口从「设置 → 插件管理」标签页迁到**侧边栏独立页** `/plugins`（`ui/Plugins.vue` + `#icon-plugin`）；设置里不再有该标签页 | `cdb2f13d` |
 | 2026-09-15 | 备份/同步相关配置文档细化（远端目录、文件名、超时） | `e138efb5` |
 | — | `listData` 收藏数据桥逻辑优化（`Promise.all` 并发、可选链） | `be7f11df` `ee72b328` `9263acf8` |

@@ -35,7 +35,7 @@ lx-plugins/
     ├── build.js                  零依赖构建脚本（可复用/复制）
     ├── README.md                 该插件的说明
     └── dist/                     构建产物（.gitignore 已忽略 dist）
-        └── <项目名>.lxplugin
+        └── <项目名>-<版本>.lxplugin
 ```
 
 ## 插件清单
@@ -59,7 +59,16 @@ node lx-plugins/repo-source-plugins/build.js --all      # 构建全部项目
 node lx-plugins/repo-source-plugins/build.js --all --out /tmp/out   # 指定输出目录
 ```
 
-产物文件名取自**插件项目目录名**，即 `lx-plugins/<项目目录名>/dist/<项目目录名>.lxplugin`。
+产物文件名 = **插件项目目录名 + 版本号**，即 `lx-plugins/<项目目录名>/dist/<项目目录名>-<版本>.lxplugin`，
+例如 `repo-source-plugins-2.12.5.lxplugin`。版本号就是 app 版本，所以每次发版产物名都会跟着变。
+
+> 写文件前脚本会**先清掉输出目录里该项目的历史产物**（无版本号的 `<项目名>.lxplugin` 与旧版本的
+> `<项目名>-<旧版本>.lxplugin`），因此 `dist/` 里始终只有当前版本一个文件，CI 用 `dist/*.lxplugin`
+> 收集产物时不会把旧版本一并带上。清理按**精确的项目名前缀 + 数字版本**匹配，
+> 同前缀的其它项目（如 `sock_proxy` vs `sock_proxy_x`）不会被误删。
+>
+> 文件名只影响观感：客户端安装时**只看扩展名**，插件身份取自文件内嵌清单的 `id`，所以改不改名都能正常安装。
+
 安装进客户端后，插件目录为 `userData/plugins/<id>/`（`plugin.json` + 入口文件 + `config.json` / `data.json`）。
 
 > ⚠️ `npm run build:plugin` 带 `--all`，**不能**再跟项目名；只构建某一个项目请直接调 `build.js <项目名>`。
@@ -182,28 +191,32 @@ grep -rnF '=== Plugin Manager ===' src
 | 工作流 | 触发 | 作用 |
 | --- | --- | --- |
 | `.github/workflows/plugin-build.yml` | `lx-plugins/**`、`src/plugins/**` 变更（push / PR）、手动触发 | 只构建插件，**每个插件单独构建、单独上传为一个 Actions Artifact**（名为 `lx-plugin-<插件名>`，可只下载某一个插件；轻量，零依赖，用于快速反馈） |
-| `.github/workflows/beta-pack.yml` | 推送 `beta` 分支 | 构建各平台安装包 **+ 插件**，全部成功后在 `Release` 任务里**自动创建 GitHub Pre-release**，把安装包与 `.lxplugin` **逐个上传为相互独立的附件** |
+| `.github/workflows/beta-plugins-pack.yml` | 推送 `beta` 分支 | 构建各平台安装包 **+ 插件**，全部成功后在 `Release` 任务里**自动创建 GitHub Pre-release**，把安装包与 `.lxplugin` **逐个上传为相互独立的附件** |
 
 插件在发布链路里的处理方式：
 
 - **插件列表自动发现**：`PluginMeta` 任务扫描 `lx-plugins/*/plugin.json` 得到插件清单，供矩阵构建与发布说明使用；新增插件项目**不需要改任何工作流文件**。
 - **一个插件一个构建任务**：`Plugins` 矩阵按插件并行构建，每个插件产出自己名下的 Artifact（`lx-plugin-<插件名>`），其中一个插件构建失败不影响其它插件（`fail-fast: false`）。
 - **每个插件都是独立附件**：`Release` 任务下载产物时不再合并成一个目录（`merge-multiple: false`），上传规则按前缀区分，因此**每个插件在 Pre-release 里都是单独一个 `.lxplugin` 附件**，可单独下载某一个插件；安装包同理各自独立。
+- **附件名带版本号**：插件附件名就是构建产物名 `<插件名>-<版本>.lxplugin`（如 `sock_proxy-2.12.5.lxplugin`），
+  一眼能看出下载的是哪个版本，也不会与历史版本混淆。工作流里用 `dist/*.lxplugin` / `dist/lx-plugin-*/*.lxplugin`
+  通配收集，因此**不依赖具体文件名**，改命名规则无需再改工作流。
 - **插件不做独立 Release**：插件统一随 app 的 Pre-release 发布，不为插件单独建 Release/tag。
-- **插件版本自动与 app 版本保持一致**：构建脚本从仓库根 `package.json` 读取 app 版本并注入产物清单
+- **插件版本自动与 app 版本保持一致**：构建脚本从仓库根 `package.json` 读取 app 版本，既注入产物清单、也写进**产物文件名**
   （`plugin.json` 无需也无法单独指定版本）。因此发新版插件 = 改完插件代码后推 `beta` 分支即可，
-  附件会带上与 app 一致的版本号。
+  附件名与清单里的版本号都与 app 一致。
 - **仅插件变更走快速通道**：`Changes` 任务判断本次推送的变更范围 —— 若只动了 `lx-plugins/**`
-  或 `.github/workflows/plugin-build.yml`，各平台安装包任务全部跳过，只跑插件矩阵，并把新构建的
-  `.lxplugin` 用 `gh release upload --clobber` **覆盖到最新 Pre-release 的附件**（没有 Pre-release
-  时回退为新建一个）；插件本身有变化、需要客户端行为配合时仍推完整安装包流程。
+  或 `.github/workflows/plugin-build.yml`，各平台安装包任务全部跳过，只跑插件矩阵，先把 pre-release 上
+  **不属于本版本的插件附件删掉**（附件名带版本号后 `--clobber` 只替换同名，不清就会新旧并存），
+  再把新构建的 `.lxplugin` 用 `gh release upload --clobber` **覆盖到最新 Pre-release 的附件**
+  （没有 Pre-release 时回退为新建一个）；插件本身有变化、需要客户端行为配合时仍推完整安装包流程。
 
 Pre-release 的命名规则：
 
 - **tag**：`v<package.json 版本>-beta.<工作流运行号>`，例如 `v2.12.5-beta.42`
 - **标题**：`Beta v2.12.5 (build 42)`
 - 标记为 **Pre-release**（`prerelease: true`，`draft: false`），因此不会占用「Latest」位置
-- 预发布正文会附带自动生成的更新说明（`generate_release_notes`），并单列一节「插件（每个插件单独一个附件）」，逐行给出插件名、版本（自动等于 app 版本）与说明
+- 预发布正文会附带自动生成的更新说明（`generate_release_notes`），并单列一节「插件（每个插件单独一个附件）」，逐行给出**附件名（含版本号）**与说明
 
 > 插件构建脚本零依赖，所以 `Plugins` 任务只做 `checkout` + `node` + 跑脚本，不执行 `npm ci`。
 
