@@ -12,7 +12,7 @@
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, statSync, cpSync } from 'fs'
 import { basename, join, resolve } from 'path'
-import { createRequire } from 'module'
+import type { CreateRequire } from 'module'
 import { EnabledState, PluginConfigStore } from './storage'
 import { readManifest, checkCompatibility } from './manifest'
 import { compareVersion } from './semver'
@@ -26,6 +26,15 @@ import type {
   PluginModule,
   PluginOperationResult,
 } from './types'
+
+// ⚠️ 不要写 `import { createRequire } from 'module'`：webpack（target: electron-main）
+// 会把它编译成 `/* createRequire() */ undefined`（'module' 不在该目标的内置模块
+// 外置列表里），导致 main 端所有插件在求值时报 "pluginRequire is not a function"
+// 而全部加载失败（renderer 端走 nodeIntegration 的 require，不受影响）。
+// 必须用 webpack 的逃逸口 __non_webpack_require__ 拿到原生 require。
+// 注意上面只能用 `import type`（类型导入编译期被擦除，不会进产物）。
+declare const __non_webpack_require__: NodeRequire
+const getCreateRequire = (): CreateRequire => __non_webpack_require__('module').createRequire
 
 interface LoadedPlugin {
   id: string
@@ -467,7 +476,7 @@ export class PluginManager {
 
     const code = readFileSync(entry, 'utf-8')
     // 用 createRequire(entry) 让插件可以 require 自身目录下/相对它的依赖
-    const pluginRequire = createRequire(entry)
+    const pluginRequire = getCreateRequire()(entry)
     const module = evaluatePluginModule({
       code,
       filename: entry,

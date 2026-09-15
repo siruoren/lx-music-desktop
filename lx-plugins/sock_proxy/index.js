@@ -44,6 +44,36 @@ const http = require('http')
 const https = require('https')
 const dns = require('dns')
 
+/** 启动诊断（顶层就初始化）：模块被求值即写第一条，用于区分「没求值」与「setup 没被调用」 */
+const bootLog = (() => {
+  let fsMod, pathMod, osMod
+  try {
+    fsMod = require('fs'); pathMod = require('path'); osMod = require('os')
+  } catch (e) {
+    console.error('[plugin:sock_proxy] 诊断模块 require 失败：', e)
+    return () => {}
+  }
+  const dirOf = typeof __dirname === 'string' && __dirname ? __dirname : null
+  const candidates = [
+    dirOf ? pathMod.join(dirOf, 'boot-debug.log') : null,
+    pathMod.join(osMod.tmpdir(), 'sock_proxy-boot-debug.log'),
+  ].filter(Boolean)
+  const errors = []
+  return (msg) => {
+    const line = `${new Date().toISOString()} [pid:${process.pid}] ${msg}\n`
+    for (const f of candidates) {
+      try {
+        fsMod.appendFileSync(f, line)
+        return
+      } catch (e) {
+        errors.push(`${f}: ${e.message}`)
+      }
+    }
+    console.error('[plugin:sock_proxy] 诊断日志写入失败：', errors.join('；'), '——', line.trim())
+  }
+})()
+bootLog(`模块顶层求值完成（__dirname=${typeof __dirname === 'string' ? __dirname : String(typeof __dirname)}）`)
+
 const SOCKS_VERSION = 0x05
 const AUTH_NONE = 0x00
 const AUTH_USERPASS = 0x02
