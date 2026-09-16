@@ -1251,12 +1251,10 @@ function browseTargetDir(cfg) {
   return { dir: parent, label: parent }
 }
 
-/** 把目录项渲染为可读文本（目录在前） */
+/** 把目录项渲染为可读文本。按需求：浏览只显示「URL + 共 xx 项」，不列出具体内容。
+ *  仅在触发「逐级回退」时附带一条简短提示（说明填写的目录列不出、已回退），便于排查配置错误。 */
 function formatListing(entries, label, note) {
-  const sorted = entries.slice().sort((a, b) => (Number(b.isDir) - Number(a.isDir)) || String(a.name).localeCompare(String(b.name)))
-  const lines = sorted.map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
-  const body = entries.length ? `目录下共 ${entries.length} 项（目录在前）：\n` + lines.join('\n') : '（空目录）'
-  return `「${label}」${note ? '\n' + note : ''}\n${body}`
+  return `「${label}」${note ? '　' + note : ''}　目录下共 ${entries.length} 项`
 }
 
 /** 判断响应体是否是 HTML 网页（而非 WebDAV 的 XML）。用于诊断「地址指向的是网页服务而非 WebDAV」。 */
