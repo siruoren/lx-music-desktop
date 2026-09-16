@@ -1251,12 +1251,16 @@ function browseTargetDir(cfg) {
   return { dir: parent, label: parent }
 }
 
-/** 把目录项渲染为可读文本（目录在前） */
+/** 把目录项渲染为可读文本（目录在前）。
+ *  注意：设置面板的 info 区是普通文本，不渲染换行（发布版还会裁剪多行文本），
+ *  所以这里用「；」连接成单行段落，并对超长列表截断，保证内容在面板里可见。 */
 function formatListing(entries, label, note) {
   const sorted = entries.slice().sort((a, b) => (Number(b.isDir) - Number(a.isDir)) || String(a.name).localeCompare(String(b.name)))
-  const lines = sorted.map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
-  const body = entries.length ? `目录下共 ${entries.length} 项（目录在前）：\n` + lines.join('\n') : '（空目录）'
-  return `「${label}」${note ? '\n' + note : ''}\n${body}`
+  const MAX_SHOWN = 30
+  const shown = sorted.slice(0, MAX_SHOWN).map(e => (e.isDir ? '[目录] ' : '[文件] ') + e.name)
+  const tail = sorted.length > MAX_SHOWN ? `……等共 ${sorted.length} 项（仅显示前 ${MAX_SHOWN} 项）` : `共 ${sorted.length} 项`
+  const body = entries.length ? shown.join('；') + `（${tail}）` : '（空目录）'
+  return `「${label}」${note ? '　' + note : ''}　${body}`
 }
 
 /** 判断响应体是否是 HTML 网页（而非 WebDAV 的 XML）。用于诊断「地址指向的是网页服务而非 WebDAV」。 */
