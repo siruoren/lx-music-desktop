@@ -79,6 +79,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lx-plugin-${{ matrix.plugin }}
-          path: lx-plugins/${{ matrix.plugin }}/dist/${{ matrix.plugin }}.lxplugin
+          # 产物名带版本号（<插件名>-<版本>.lxplugin），故用通配符取；
+          # build.js 每次构建前会清掉该项目在 dist/ 里的旧产物，所以这里只会匹配到一个文件。
+          path: lx-plugins/${{ matrix.plugin }}/dist/*.lxplugin
           if-no-files-found: error
           retention-days: 30

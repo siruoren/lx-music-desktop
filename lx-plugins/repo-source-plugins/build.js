@@ -2,8 +2,15 @@
 /**
  * lx-plugins 插件构建脚本（零依赖，不需要 npm install）。
  *
- * 产物：**单个文件** —— `lx-plugins/<项目目录名>/dist/<项目目录名>.lxplugin`，
+ * 产物：**单个文件** —— `lx-plugins/<项目目录名>/dist/<项目目录名>-<版本>.lxplugin`，
+ * 例如 `repo-source-plugins-2.12.5.lxplugin`（版本 = app 版本，随发版变化）。
  * 在客户端「插件管理（侧边栏）」里上传（或拖拽）该文件即可安装 / 更新。
+ *
+ * ⚠️ 文件名里的版本号**只是给人看的**：插件身份取自文件内嵌清单的 `id`，
+ * 安装时客户端只校验扩展名、不看文件名，所以文件名带不带版本号都不影响识别。
+ * 写入前会自动清掉输出目录里该项目的历史产物（无版本号的 `<项目名>.lxplugin`
+ * 与旧版本的 `<项目名>-<旧版本>.lxplugin`），保证 `dist/` 里始终只有一个最新版本，
+ * 这样 CI 用 `dist/*.lxplugin` 打包/上传时不会把旧版本一并带上。
  *
  * .lxplugin 的结构（见 src/plugins/format.ts）：
  *
@@ -82,6 +89,41 @@ function readJSON(file) {
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * 清掉输出目录里**本项目**的历史产物（返回被删掉的文件名）。
+ *
+ * 只匹配 `<项目名>.lxplugin`（旧命名，无版本号）与 `<项目名>-<版本>.lxplugin`。
+ * 版本号一定以数字开头，因此同前缀的其它项目不会被误删：
+ * `sock_proxy_x.lxplugin`、`repo-source-plugins-extra.lxplugin` 都不匹配。
+ *
+ * 为什么要清：产物名现在带版本号，发版后 `dist/` 会同时留有新旧两个版本，
+ * 而 CI 是按 `dist/*.lxplugin` 打包/上传的，不清就会把旧版本一起带上。
+ */
+function cleanupStaleArtifacts(outDir, projectName) {
+  const pattern = new RegExp(`^${escapeRegExp(projectName)}(-\\d[^/\\\\]*)?\\.lxplugin$`)
+  const removed = []
+  let entries
+  try {
+    entries = fs.readdirSync(outDir)
+  } catch {
+    return removed // 输出目录还不存在，无需清理
+  }
+  for (const name of entries) {
+    if (!pattern.test(name)) continue
+    try {
+      fs.unlinkSync(path.join(outDir, name))
+      removed.push(name)
+    } catch {
+      // 删不掉就跳过：新产物仍会正常写出，只是旧文件留下来，不影响本次构建
+    }
+  }
+  return removed
 }
 
 /** 校验清单，返回规范化后的清单（main 固定为安装后的入口文件名；version 用 app 版本覆盖） */
@@ -173,8 +215,13 @@ function buildProject(projectDir, outDir, appVersion) {
     code,
   ].join('\n')
 
-  const outFile = path.join(outDir, `${projectName}.lxplugin`)
   fs.mkdirSync(outDir, { recursive: true })
+  // 先清旧产物再写出，保证输出目录里只留当前版本（见 cleanupStaleArtifacts 注释）
+  const removed = cleanupStaleArtifacts(outDir, projectName)
+  if (removed.length) log(`已清理 ${projectName} 的旧产物：${removed.join('、')}`)
+
+  // 产物名带版本号：<项目名>-<版本>.lxplugin（版本 = app 版本）
+  const outFile = path.join(outDir, `${projectName}-${manifest.version}.lxplugin`)
   fs.writeFileSync(outFile, artifact, 'utf-8')
 
   log(`已构建 ${projectName}@${manifest.version} → ${path.relative(process.cwd(), outFile)}`)

@@ -42,7 +42,8 @@
 npm run build:plugin
 ```
 
-产物：`lx-plugins/repo-source-plugins/dist/repo-source-plugins.lxplugin`（单个文件）。
+产物：`lx-plugins/repo-source-plugins/dist/repo-source-plugins-<版本>.lxplugin`（单个文件，版本 = app 版本，
+如 `repo-source-plugins-2.12.5.lxplugin`；构建前会清掉 dist 里本插件的旧产物）。
 
 构建脚本零依赖，逻辑见 [`build.js`](./build.js)：读取 `plugin.json` → 取入口代码 →
 在最前面套一个 `/*!lxplugin ... */` 横幅（内嵌清单）→ 写出单个 `.lxplugin`。

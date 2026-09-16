@@ -357,9 +357,9 @@ jobs:
           echo "plugins=$LIST" >> "$GITHUB_OUTPUT"
           echo "发现插件项目：$LIST"
 
-      # 生成 Release 说明里的插件清单（插件名 + 版本 + 说明），每个插件一行，
+      # 生成 Release 说明里的插件清单（插件附件名 + 说明），每个插件一行。
       # 插件版本统一使用 app 版本（构建时由 build.js 自动注入，plugin.json 不再维护 version），
-      # 新增插件无需改本文件。
+      # 附件名也因此形如 <插件名>-<版本>.lxplugin；新增插件无需改本文件。
       - name: Describe plugins
         id: describe
         env:
@@ -371,7 +371,7 @@ jobs:
             const names = JSON.parse(process.env.PLUGINS);
             const lines = names.map(name => {
               const pj = JSON.parse(fs.readFileSync(path.join('lx-plugins', name, 'plugin.json'), 'utf-8'));
-              return '- **' + name + '.lxplugin** — v' + process.env.APP_VERSION + (pj.description ? '：' + pj.description : '');
+              return '- **' + name + '-' + process.env.APP_VERSION + '.lxplugin**' + (pj.description ? '：' + pj.description : '');
             });
             fs.appendFileSync(process.env.GITHUB_OUTPUT, 'plugin_list<<EOF\n' + lines.join('\n') + '\nEOF\n');
           "
@@ -404,7 +404,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: lx-plugin-${{ matrix.plugin }}
-          path: lx-plugins/${{ matrix.plugin }}/dist/${{ matrix.plugin }}.lxplugin
+          # 产物名带版本号（<插件名>-<版本>.lxplugin），故用通配符取；
+          # build.js 构建前会清掉该项目在 dist/ 里的旧产物，这里只会匹配到一个文件。
+          path: lx-plugins/${{ matrix.plugin }}/dist/*.lxplugin
           if-no-files-found: error
 
   # 全量构建：等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
@@ -455,7 +457,7 @@ jobs:
 
             ### 插件安装
 
-            下载需要的 `.lxplugin` 文件后，在客户端「设置 → 插件管理」中点击「安装插件」上传即可安装/更新。
+            下载需要的 `.lxplugin` 文件后，在客户端侧边栏「插件管理」中点击「上传安装插件」上传即可安装 / 更新（已装过则在对应插件那行点「上传新版本」）。
           # 安装包：每个安装包 Artifact 目录下的文件各自作为独立附件；
           # 插件：每个插件 Artifact 目录下的 .lxplugin 各自作为独立附件。
           #
@@ -503,7 +505,21 @@ jobs:
             echo "::error::没有找到插件构建产物（dist/lx-plugin-*/*.lxplugin）"
             exit 1
           fi
-          echo "覆盖上传以下插件附件到 pre-release $TAG（--clobber 替换同名附件）："
+
+          # 产物名带版本号（<插件名>-<版本>.lxplugin），而 --clobber 只按**同名**替换。
+          # 目标 pre-release 上若残留别的版本 / 旧命名（无版本号）的插件附件，先删掉它们，
+          # 否则附件里会同时挂着新旧两版（用户可能下错），下面的核对步骤也会一直对不上。
+          expected=$(for f in "${files[@]}"; do basename "$f"; done | sort)
+          while IFS= read -r asset; do
+            [ -z "$asset" ] && continue
+            if ! grep -qxF "$asset" <<< "$expected"; then
+              echo "删除过期插件附件：$asset"
+              gh release delete-asset "$TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+            fi
+          done < <(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                     --jq '.assets[].name' | grep '\.lxplugin$' || true)
+
+          echo "覆盖上传以下插件附件到 pre-release ${TAG}（--clobber 替换同名附件）："
           ls -lh "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
 
@@ -530,7 +546,7 @@ jobs:
 
             ### 插件安装
 
-            下载需要的 `.lxplugin` 文件后，在客户端「设置 → 插件管理」中点击「安装插件」上传即可安装/更新。
+            下载需要的 `.lxplugin` 文件后，在客户端侧边栏「插件管理」中点击「上传安装插件」上传即可安装 / 更新（已装过则在对应插件那行点「上传新版本」）。
           files: |
             dist/lx-plugin-*/*.lxplugin
           preserve_order: true
@@ -570,7 +586,7 @@ jobs:
             diff -u expected.txt actual.txt || true
             exit 1
           fi
-          echo "✅ 已把最新插件附件覆盖到 pre-release $TAG（$(wc -l < actual.txt | tr -d ' ') 个插件齐全）"
+          echo "✅ 已把最新插件附件覆盖到 pre-release ${TAG}（$(wc -l < actual.txt | tr -d ' ') 个插件齐全）"
 
       # 上传完必须核对一次：附件数/文件名要和 dist/ 里准备上传的文件完全一致。
       # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
