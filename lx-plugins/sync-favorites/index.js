@@ -99,7 +99,16 @@ function formatTime(ts) {
 
 /** 拼接 URL（处理多余斜杠） */
 function buildRemoteUrl(cfg) {
-  const base = String(cfg.host || '').replace(/\/+$/, '')
+  let base = String(cfg.host || '').replace(/\/+$/, '')
+  // 「端口」字段：host 未带端口时追加（WebDAV 场景）；host 已带端口则尊重 host，不重复拼
+  const port = String(cfg.port || '').trim()
+  if (port && /^https?:\/\//i.test(base)) {
+    try {
+      const u = new URL(base)
+      if (!u.port) u.port = port
+      base = u.origin
+    } catch (_) { /* URL 不合法则保持原样，后续请求会给出可读错误 */ }
+  }
   const path = String(cfg.remotePath || '').replace(/^\/+|\/+$/g, '')
   const file = String(cfg.filename || 'lx_favorites.json').replace(/^\/+/, '')
   let url = base
@@ -132,7 +141,7 @@ function decryptText(obj, password) {
   return Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8')
 }
 
-/** 把收藏列表包装成传输信封（可选加密） */
+/** 把收藏列表包装成传输信封（可选加密）。返回 JSON 字符串（putFile 直接写入远端） */
 function buildEnvelope(lists, cfg) {
   const meta = {
     _app: 'lx-music-desktop',
@@ -141,17 +150,20 @@ function buildEnvelope(lists, cfg) {
     _format: 1,
     _createdAt: Date.now(),
   }
+  let env
   if (cfg.encrypt && cfg.encryptPassword) {
     const e = encryptText(JSON.stringify(lists), cfg.encryptPassword)
-    return Object.assign({}, meta, {
+    env = Object.assign({}, meta, {
       _encrypted: true,
       _enc: 'aes-256-cbc',
       _salt: e.salt,
       _iv: e.iv,
       _cipher: e.cipher,
     })
+  } else {
+    env = Object.assign({}, meta, { _encrypted: false, lists })
   }
-  return Object.assign({}, meta, { _encrypted: false, lists })
+  return JSON.stringify(env)
 }
 
 /** 解析远端文件内容为收藏列表（自动处理加密） */
@@ -173,14 +185,16 @@ function sortEntries(a, b) {
   return (b.isDir ? 1 : 0) - (a.isDir ? 1 : 0) || String(a.name).localeCompare(String(b.name))
 }
 
-/** 解析 WebDAV PROPFIND 多状态响应，返回 { name, isDir }[]（排除自身条目） */
+/** 解析 WebDAV PROPFIND 多状态响应，返回 { name, isDir }[]（排除自身条目）。
+ *  注意：<response>/<href> 标签可能带属性（如 <D:response xmlns:lp1="DAV:">，Apache/群晖 常见），
+ *  且前缀大小写不定（d: / D:），正则须允许任意属性并忽略大小写。 */
 function parseDavListing(xml, baseUrl) {
   const out = []
-  const re = /<(d:)?response>([\s\S]*?)<\/\1response>/gi
+  const re = /<(d:)?response\b[^>]*>([\s\S]*?)<\/\1response\s*>/gi
   let m
   while ((m = re.exec(xml))) {
     const block = m[2]
-    const hrefM = /<(d:)?href>([\s\S]*?)<\/\1href>/i.exec(block)
+    const hrefM = /<(d:)?href\b[^>]*>([\s\S]*?)<\/\1href\s*>/i.exec(block)
     if (!hrefM) continue
     const href = decodeURIComponent(hrefM[2].trim())
     const isDir = /<(d:)?collection\s*\/?>/i.test(block)
@@ -189,8 +203,9 @@ function parseDavListing(xml, baseUrl) {
     let basePath
     try { basePath = new URL(baseUrl).pathname } catch (e) { basePath = baseUrl }
     if (abs === basePath || abs === basePath + '/') continue // 跳过自身
-    const name = abs.replace(/\/+$/, '').split('/').pop()
+    let name = abs.replace(/\/+$/, '').split('/').pop()
     if (!name) continue
+    try { name = decodeURIComponent(name) } catch (_) { /* 已是明文则保持 */ }
     out.push({ name, isDir })
   }
   out.sort(sortEntries)
@@ -303,6 +318,26 @@ function makeRequest(urlStr, options) {
   })
 }
 
+/** 跟随 HTTP 3xx 重定向（最多 5 跳，可跨协议 http↔https）。
+ *  群晖等在未认证/根路径常把请求 302 跳到 DSM 登录页，不跟随重定向会被误判成「非 WebDAV」。 */
+async function requestFollowRedirect(urlStr, options, hops) {
+  hops = hops || 0
+  if (hops > 5) return makeRequest(urlStr, options)
+  const res = await makeRequest(urlStr, options)
+  if (res.status >= 300 && res.status < 400) {
+    const loc = res.headers && (res.headers['location'] || res.headers['Location'])
+    if (loc) {
+      try {
+        const next = new URL(loc, urlStr).toString()
+        const r = await requestFollowRedirect(next, options, hops + 1)
+        r.redirected = true // 标记经过了重定向（诊断时区分「根路径跳主页」与「直接打到网页服务」）
+        return r
+      } catch (_) { /* location 非法则忽略，返回原响应 */ }
+    }
+  }
+  return res
+}
+
 /** 从一个文件 URL 解析出「需逐级创建的父目录 URL 列表」（用于 MKCOL 建多层级目录）。
  *  例：http://h:5505/lx-music/favorites/lx_favorites.json
  *    → ['http://h:5505/lx-music/', 'http://h:5505/lx-music/favorites/'] */
@@ -356,7 +391,9 @@ function createWebDavClient(cfg) {
   return {
     protocol: 'webdav',
     async putFile(url, content) {
-      const buf = Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8')
+      const buf = Buffer.isBuffer(content)
+        ? content
+        : Buffer.from(typeof content === 'string' ? content : JSON.stringify(content), 'utf8')
       const res = await makeRequest(url, {
         method: 'PUT',
         body: buf,
@@ -381,14 +418,17 @@ function createWebDavClient(cfg) {
     async listDir(collectionUrl) {
       const url = collectionUrl.endsWith('/') ? collectionUrl : collectionUrl + '/'
       const body = '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/><d:displayname/></d:prop></d:propfind>'
-      const res = await makeRequest(url, {
+      const res = await requestFollowRedirect(url, {
         method: 'PROPFIND',
         headers: { Depth: '1', 'Content-Type': 'application/xml; charset=utf-8' },
         body: Buffer.from(body, 'utf8'),
         auth, secure: insecure ? false : undefined, timeout,
       })
       if (res.status >= 400) throw new Error('WebDAV 列目录失败：HTTP ' + res.status)
-      return parseDavListing(res.body.toString('utf8'), url)
+      if (res.status >= 300) throw new Error('WebDAV 列目录失败：服务器重定向（HTTP ' + res.status + '），地址可能未指向 WebDAV 端点')
+      const txt = res.body.toString('utf8')
+      if (!/multistatus/i.test(txt)) throw new Error('WebDAV 列目录失败：响应不是 WebDAV 目录列表（HTTP ' + res.status + '），地址可能未指向 WebDAV 端点')
+      return parseDavListing(txt, url)
     },
     /** WebDAV 能力探测：OPTIONS 看 Allow / DAV 头，用于诊断「地址是否真的是 WebDAV」 */
     async options(url) {
@@ -399,6 +439,55 @@ function createWebDavClient(cfg) {
         allow: String(h['allow'] || h['Allow'] || '').toUpperCase(),
         dav: String(h['dav'] || h['DAV'] || ''),
       }
+    },
+    /** WebDAV 能力探测（更可靠）：用真正的 PROPFIND 判断，比 OPTIONS 头更准。
+     *  返回 { isDav, needsAuth }：
+     *   - isDav=true,  needsAuth=false：确认是 WebDAV 且可匿名访问
+     *   - isDav=true,  needsAuth=true ：确认是 WebDAV，但需要登录/权限校验（如群晖 homes 共享）
+     *   - isDav=false                  ：大概率不是 WebDAV 端点或未启用 WebDAV */
+    async capability(url) {
+      const diag = { status: null, headers: '', body: '' }
+      // 1) 优先用真正的 PROPFIND（Depth:0）—— 这才是 WebDAV 的判定依据；跟随重定向（群晖未认证/根路径常 302 跳登录页）
+      try {
+        const res = await requestFollowRedirect(url, {
+          method: 'PROPFIND',
+          headers: { Depth: '0', 'Content-Type': 'application/xml; charset=utf-8' },
+          body: Buffer.from('<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:resourcetype/></d:prop></d:propfind>', 'utf8'),
+          auth, secure: insecure ? false : undefined, timeout,
+        })
+        const bodyText = res.body.toString('utf8')
+        diag.status = res.status
+        diag.headers = JSON.stringify(res.headers || {}).slice(0, 240)
+        diag.body = bodyText.slice(0, 160)
+        diag.html = looksLikeHtml(bodyText)
+        diag.viaRedirect = res.redirected === true
+        const isMulti = /multistatus/i.test(bodyText)
+        if (res.status === 207 || (res.status >= 200 && res.status < 300 && isMulti)) return { isDav: true, needsAuth: false, diag }
+        if (res.status === 401 || res.status === 403) return { isDav: true, needsAuth: true, diag }
+      } catch (e) {
+        diag.status = 'ERR'
+        diag.body = '请求异常：' + e.message
+      }
+      // 2) 回退：OPTIONS 看 DAV 头 / Allow（也跟随重定向）
+      try {
+        const opt = await requestFollowRedirect(url, { method: 'OPTIONS', auth, secure: insecure ? false : undefined, timeout })
+        diag.status = diag.status == null ? opt.status : diag.status
+        diag.headers = JSON.stringify(opt.headers || {}).slice(0, 240)
+        if (!diag.body) {
+          const optBody = opt.body.toString('utf8')
+          diag.body = optBody.slice(0, 160)
+          diag.html = looksLikeHtml(optBody)
+          diag.viaRedirect = opt.redirected === true
+        }
+        if (opt.status === 401 || opt.status === 403) return { isDav: true, needsAuth: true, diag }
+        const h = opt.headers || {}
+        const allow = String(h['allow'] || h['Allow'] || '').toUpperCase()
+        const dav = String(h['dav'] || h['DAV'] || '')
+        if (/PROPFIND/.test(allow) || /DAV/i.test(dav)) return { isDav: true, needsAuth: false, diag }
+      } catch (e) {
+        if (diag.status == null) diag.body = 'OPTIONS 请求异常：' + e.message
+      }
+      return { isDav: false, needsAuth: false, diag }
     },
     async ensureParent(fileUrl) {
       return await ensureParentDirs(fileUrl, auth, insecure, timeout)
@@ -969,12 +1058,15 @@ function normalizeCollection(lists) {
   return { map, order }
 }
 
-/** 还原为导入/导出用的列表数组（id + name + list） */
+/** 还原为导入/导出用的列表数组（id + name + list）。
+ *  兼容两种集合形状：normalizeCollection/filterByScope 的 { map, order } 与
+ *  mergeCollections 的 { collection, order, conflicts }（历史上两次命名并存，这里统一容错）。 */
 function denormalizeCollection(norm) {
-  const { map, order } = norm
+  const map = (norm && (norm.map || norm.collection)) || {}
+  const order = (norm && norm.order) || []
   const ids = order.slice()
   for (const id of Object.keys(map)) if (!ids.includes(id)) ids.push(id)
-  return ids.map(id => ({ id, name: map[id].name, list: map[id].songs.slice() }))
+  return ids.map(id => ({ id, name: map[id] && map[id].name, list: map[id] ? map[id].songs.slice() : [] }))
 }
 
 /** 比较两个列表的名称与歌曲集合（忽略顺序）是否一致 */
@@ -1167,6 +1259,12 @@ function formatListing(entries, label, note) {
   return `「${label}」${note ? '\n' + note : ''}\n${body}`
 }
 
+/** 判断响应体是否是 HTML 网页（而非 WebDAV 的 XML）。用于诊断「地址指向的是网页服务而非 WebDAV」。 */
+function looksLikeHtml(text) {
+  const t = String(text || '').trim().toLowerCase()
+  return t.startsWith('<!doctype') || t.startsWith('<html') || t.includes('<html') || t.includes('<head>')
+}
+
 /** 从「某个远端目录 URL」逐级向上收集候选 URL（最深的在前，根 / 在最后兜底）。
  *  例：http://h:5505/lx-music/favorites/ →
  *      [http://h:5505/lx-music/favorites/, http://h:5505/lx-music/, http://h:5505/]
@@ -1201,21 +1299,25 @@ async function browseDir(api, cfg) {
       return formatListing(entries, lv, note)
     } catch (e) { /* 该层级列不出，尝试更浅的层级 */ }
   }
-  // 任何层级（含根）都列不出 → WebDAV 能力诊断：区分「不是 WebDAV」与「路径/权限不对」
+  // 任何层级（含根）都列不出 → WebDAV 能力诊断：用真正的 PROPFIND 探测（比 OPTIONS 头可靠）
   const rootUrl = levels[levels.length - 1] || (String(cfg.host || '').replace(/\/+$/, '') + '/')
-  if (typeof client.options === 'function') {
-    try {
-      const opt = await client.options(rootUrl)
-      const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
-      if (looksDav) {
-        throw new Error(`该地址是 WebDAV，但根目录也列不出（可能未登录或无权限）。请确认账号密码已填写、且账号对该共享有读取权限。原始错误：${label}`)
-      }
-      throw new Error(`该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点（群晖通常为 http://IP:5005 或自定义端口；Nextcloud 为 /remote.php/dav/files/用户名/），并检查端口与账号密码。`)
-    } catch (probeErr) {
-      if (/WebDAV/.test(probeErr.message) && /根目录/.test(probeErr.message)) throw probeErr
-      if (/OPTIONS 未返回/.test(probeErr.message)) throw probeErr
-      throw new Error(`无法列出目录（含根）；探测 WebDAV 能力也失败：${probeErr.message}`)
+  if (typeof client.capability === 'function') {
+    const cap = await client.capability(rootUrl)
+    if (cap.isDav && cap.needsAuth) {
+      throw new Error(`该地址是 WebDAV，但需要登录或有权限校验（探测返回 401/403），根目录也列不出。请确认「账号」「密码」已正确填写（群晖 WebDAV 默认用 DSM 账号，需在 DSM 控制面板 → 应用门户 → WebDAV 中开启服务），且账号对该共享有读取权限。`)
     }
+    if (cap.isDav) {
+      throw new Error(`该地址是 WebDAV，但根目录也列不出（可能账号无该共享读取权限，或「远端目录」不存在）。请确认账号密码已填写、「远端目录」以已存在的共享名开头（如 homes/lx-music、photo/lx-music），且账号对该共享有读取权限。原始错误：${label}`)
+    }
+    const d = cap.diag || {}
+    const bodySnip = d.body ? String(d.body).replace(/[\r\n]+/g, ' ').slice(0, 120) : ''
+    const diagText = d.status != null
+      ? `（服务器实际返回：HTTP ${d.status}${bodySnip ? '，响应体前若干字符：' + bodySnip : ''}）`
+      : ''
+    if (d.html) {
+      throw new Error(`探测发现该地址返回的是「HTML 网页」而不是 WebDAV 的 XML 响应${diagText}。这说明你打到的是网页服务（极可能是群晖 DSM 管理界面，或路由器/其它 Web 服务），不是 WebDAV 端点。WebDAV 在群晖里是「独立服务、独立端口」：请到 DSM「控制面板 → 文件服务 → WebDAV」勾选启用 WebDAV / WebDAV HTTPS，并记下它显示的端口（HTTP 通常 5005、HTTPS 通常 5006）；然后把插件里 host 改成 http://192.168.31.120:<WebDAV端口>（不要用 DSM 管理界面的端口，如 5505/5000）。若 Finder 能连，请把 Finder「前往 → 连接服务器」里填的地址完整发我。`)
+    }
+    throw new Error(`该地址未通过 WebDAV 能力探测（PROPFIND/OPTIONS 均不像 WebDAV 端点）。${diagText}大概率不是 WebDAV 端点或未启用 WebDAV。请确认 host 指向 WebDAV 挂载点（群晖通常为 http://IP:5005 或 https://IP:5006），并检查端口与账号密码；若 Finder 能连但插件不能，多半是端口/协议不一致（Finder 可能用了 https 或不同端口），请把 Finder 里显示的 WebDAV 地址完整发我。`)
   }
   throw new Error(`无法列出目录（含根）：${label}`)
 }
@@ -1235,14 +1337,24 @@ async function testConnection(api, cfg) {
   try {
     await client.putFile(tmpUrl, probe)
   } catch (e) {
-    // PUT 失败：WebDAV 客户端尝试 OPTIONS 探测，判断地址是否真的启用了 WebDAV；SMB/FTP 无此能力则跳过
+    // PUT 失败：WebDAV 客户端用真正的 PROPFIND 探测能力，给出更精准诊断（比 OPTIONS 头可靠）
     let hint = ''
-    if (typeof client.options === 'function') {
+    if (typeof client.capability === 'function') {
       try {
-        const opt = await client.options(parent)
-        const looksDav = /PROPFIND/.test(opt.allow) || /DAV/i.test(opt.dav)
-        if (!looksDav) {
-          hint = '；该地址 OPTIONS 未返回 WebDAV 能力（无 DAV 头、Allow 中无 PROPFIND），大概率未指向 WebDAV 挂载点或未启用 WebDAV'
+        const cap = await client.capability(parent)
+        if (cap.isDav && cap.needsAuth) {
+          hint = '；该地址是 WebDAV 但需要登录/权限（探测返回 401/403），请确认账号密码正确（群晖 WebDAV 默认用 DSM 账号，需在 DSM 应用门户→WebDAV 开启服务）'
+        } else if (!cap.isDav) {
+          const d = cap.diag || {}
+          const bodySnip = d.body ? String(d.body).replace(/[\r\n]+/g, ' ').slice(0, 120) : ''
+          const diagText = d.status != null
+            ? `（服务器返回：HTTP ${d.status}${bodySnip ? '，响应体前若干字符：' + bodySnip : ''}）`
+            : ''
+          if (d.html) {
+            hint = '；该地址返回的是 HTML 网页而非 WebDAV 的 XML' + diagText + '，说明指向的是网页服务（极可能是群晖 DSM 管理界面）而非 WebDAV 端点。请在 DSM「控制面板 → 文件服务 → WebDAV」启用服务并使用其显示的端口（HTTP 通常 5005、HTTPS 通常 5006），不要用 DSM 管理界面的端口'
+          } else {
+            hint = '；该地址未通过 WebDAV 能力探测' + diagText + '，大概率未指向 WebDAV 挂载点或未启用 WebDAV，请确认 host/端口/账号密码'
+          }
         }
       } catch (_) { /* 探测失败不影响主错误 */ }
     } else if (String(cfg.type || '').toLowerCase() === 'smb') {
@@ -1280,10 +1392,14 @@ module.exports = {
     testConnection,
     browseDir,
     browseTargetDir,
+    doSync,
+    parseEnvelope,
+    buildEnvelope,
     collectAncestorUrls,
     ensureParentDirs,
     parentDirUrls,
     formatListing,
+    looksLikeHtml,
     parseDavListing,
     parseMlsd,
     parseUnixList,
@@ -1345,83 +1461,118 @@ module.exports = {
     ctx = { api, state, startTimer, stopTimer, execute, doBrowse, _connSig: '', _browseTimer: null }
 
     /* ---------- 声明式设置面板 ---------- */
-    if (api.registerSettings) {
-      api.registerSettings({
-        title: '我的列表同步',
-        fields: [
-          {
-            type: 'text',
-            key: 'type',
-            label: '同步协议',
-            default: 'webdav',
-            placeholder: 'webdav / ftp / smb',
-            tip: 'webdav：基于 HTTP 的网盘/同步盘；ftp：文件传输协议（可勾选 FTPS 加密）；smb：Windows/NAS 文件共享（委派系统自带工具，macOS 用 mount_smbfs、Windows 用 net use、或 samba 的 smbclient）。',
-          },
-          { type: 'text', key: 'host', label: '服务器地址', placeholder: 'https://dav.example.com 或 ftp.example.com 或 192.168.1.10', default: '', tip: 'WebDAV/FTP 含协议或主机名；SMB 只填 IP/主机名，不要带 smb:// 前缀。' },
-          { type: 'text', key: 'port', label: '端口', placeholder: 'WebDAV 依协议默认；FTP/SMB 默认 445/21', default: '', tip: '留空使用协议默认端口。SMB 默认 445。' },
-          { type: 'text', key: 'remotePath', label: '远端目录', placeholder: 'lx-music/favorites', default: 'lx-music/favorites', tip: '备份文件所在目录（不含文件名）。WebDAV/群晖须以已存在的「共享名」开头，如 homes/lx-music、photo/lx-music；SMB 首段是共享名，如 share/subdir。填好协议+地址后点「浏览目录」（或改地址自动触发）可列出可用共享，照着抄即可。' },
-          { type: 'text', key: 'filename', label: '文件名', placeholder: 'lx_favorites.json', default: 'lx_favorites.json' },
-          { type: 'text', key: 'username', label: '账号', placeholder: '留空表示匿名/无认证', default: '' },
-          { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要密码', default: '' },
-          { type: 'text', key: 'domain', label: '域/工作组（仅 SMB）', placeholder: '如 WORKGROUP，留空表示无', default: '' },
-          { type: 'switch', key: 'insecure', label: 'WebDAV 忽略证书校验（自签名）', default: false },
-          { type: 'switch', key: 'secure', label: 'FTP 启用 FTPS（AUTH TLS 加密）', default: false },
-          { type: 'switch', key: 'passive', label: 'FTP 被动模式', default: true, tip: '绝大多数 FTP 服务器需要开启；如遇连接超时再尝试关闭。' },
-          { type: 'number', key: 'timeout', label: '超时（毫秒）', default: 20000 },
-          { type: 'divider' },
-          {
-            type: 'text',
-            key: 'mode',
-            label: '同步方向',
-            default: 'upload',
-            placeholder: 'upload / download / both',
-            tip: 'upload=备份到远端；download=从远端还原到本地；both=双向合并（推荐）。双向/还原时若本地与远端都有改动，按下方「冲突策略」处理；内容无变化则跳过传输（增量）。',
-          },
-          {
-            type: 'text',
-            key: 'conflictStrategy',
-            label: '冲突策略',
-            default: 'merge',
-            placeholder: 'merge / local / remote',
-            tip: '本地与远端都改了同一列表时如何处理：merge=合并双方（并集，不丢歌）；local=以本地为准覆盖远端；remote=以远端为准覆盖本地。',
-          },
-          {
-            type: 'text',
-            key: 'scope',
-            label: '同步范围',
-            default: 'default,love,user',
-            placeholder: 'default,love,user 或 all',
-            tip: '逗号分隔，控制同步哪些列表：default=试听列表、love=我的收藏、user=我的列表（创建的歌单）；留空或 all=全部同步。试听列表是临时播放队列，跨设备同步通常意义不大，可去掉 default 只写 love,user。',
-          },
-          { type: 'switch', key: 'autoSync', label: '启用定时同步', default: false },
-          { type: 'number', key: 'interval', label: '同步间隔（分钟）', default: 60, tip: '≥1；仅在「启用定时同步」后生效。' },
-          { type: 'divider' },
-          { type: 'switch', key: 'encrypt', label: '加密备份文件（AES-256）', default: false, tip: '加密后即使云端泄露也无法读取收藏内容；还原需填写相同密码。' },
-          { type: 'password', key: 'encryptPassword', label: '加密密码', placeholder: '还原时需一致', default: '' },
-          { type: 'divider' },
-          {
-            type: 'buttons',
-            buttons: [
-              { label: '立即备份', action: 'backup' },
-              { label: '立即还原', action: 'restore' },
-              { label: '测试连接', action: 'test' },
-              { label: '浏览目录', action: 'browse' },
-            ],
-          },
-          {
-            type: 'info',
-            label: '目录列表（填好协议/地址后自动显示，或点「浏览目录」）',
-            text: () => (ctx && ctx.state.dirListing) || (state.dirListing || '尚未浏览'),
-          },
-          {
-            type: 'info',
-            label: '状态',
-            text: () => state.lastResult || '尚未执行',
-            suffix: () => (state.lastSyncAt ? `上次同步：${formatTime(state.lastSyncAt)}` : '从未同步'),
-          },
-        ],
-      })
+    /** 当前协议（容错：接受 webdav/ftp/smb 的任意大小写与多余空格） */
+    const currentType = () => {
+      const t = String(state.type || 'webdav').trim().toLowerCase()
+      return t === 'ftp' ? 'ftp' : t === 'smb' ? 'smb' : 'webdav'
     }
+    /**
+     * 按当前协议构建字段列表：连接类字段只显示当前协议需要的项，
+     * 同步行为类字段（方向/冲突/范围/定时/加密）三种协议通用。
+     * 面板在按钮动作后会重拉 spec，因此切协议时重注册即可立即生效（无需改宿主）。
+     */
+    const buildFields = () => {
+      const t = currentType()
+      const protoFields = t === 'webdav'
+        ? [
+            { type: 'text', key: 'host', label: '服务器地址', placeholder: 'http://192.168.31.120 或 https://dav.example.com', default: '', tip: '含协议前缀；群晖填 http://IP，端口填到下方「端口」字段（不要拼进地址）。' },
+            { type: 'text', key: 'port', label: '端口', placeholder: '留空使用默认 80/443；群晖 WebDAV 常为 5005/5006', default: '', tip: '留空使用协议默认端口。' },
+            { type: 'switch', key: 'insecure', label: '忽略证书校验（自签名 HTTPS）', default: false },
+          ]
+        : t === 'ftp'
+          ? [
+              { type: 'text', key: 'host', label: '服务器地址', placeholder: 'ftp.example.com 或 192.168.1.10', default: '', tip: '只填主机名/IP，不带 ftp:// 前缀。' },
+              { type: 'text', key: 'port', label: '端口', placeholder: '留空使用默认 21', default: '', tip: '留空使用默认端口 21。' },
+              { type: 'switch', key: 'secure', label: '启用 FTPS（AUTH TLS 加密）', default: false },
+              { type: 'switch', key: 'passive', label: '被动模式（PASV）', default: true, tip: '绝大多数 FTP 服务器需要开启；如遇连接超时再尝试关闭。' },
+            ]
+          : [
+              { type: 'text', key: 'host', label: '服务器地址', placeholder: '192.168.1.10', default: '', tip: '只填 IP/主机名，不要带 smb:// 前缀。' },
+              { type: 'text', key: 'port', label: '端口', placeholder: '留空使用默认 445', default: '', tip: '留空使用默认端口 445。' },
+              { type: 'text', key: 'domain', label: '域/工作组', placeholder: '如 WORKGROUP，留空表示无', default: '' },
+            ]
+      const pathTip = t === 'smb'
+        ? '备份文件所在目录（不含文件名）。首段必须是共享名，如 share/subdir。填好地址后点「浏览目录」可列出可用共享，照着抄即可。'
+        : '备份文件所在目录（不含文件名）。须以 NAS 上已存在的「共享名」开头，如 homes/lx-music、photo/lx-music。填好地址后点「浏览目录」（或改地址自动触发）可列出可用共享，照着抄即可。'
+      return [
+        {
+          type: 'buttons',
+          buttons: [
+            { label: 'WebDAV', action: 'use-webdav', disabled: t === 'webdav' },
+            { label: 'FTP', action: 'use-ftp', disabled: t === 'ftp' },
+            { label: 'SMB', action: 'use-smb', disabled: t === 'smb' },
+          ],
+          suffix: () => `当前协议：${t.toUpperCase()}`,
+          tip: '同步协议（单选）：点击切换，当前协议的按钮为选中（灰置）状态；下方只显示该协议需要填写的内容。',
+        },
+        ...protoFields,
+        { type: 'text', key: 'remotePath', label: '远端目录', placeholder: t === 'smb' ? 'share/subdir' : 'homes/lx-music', default: 'lx-music/favorites', tip: pathTip },
+        { type: 'text', key: 'filename', label: '文件名', placeholder: 'lx_favorites.json', default: 'lx_favorites.json' },
+        { type: 'text', key: 'username', label: '账号', placeholder: '留空表示匿名/无认证', default: '' },
+        { type: 'password', key: 'password', label: '密码', placeholder: '留空表示不需要密码', default: '' },
+        { type: 'number', key: 'timeout', label: '超时（毫秒）', default: 20000 },
+        { type: 'divider' },
+        {
+          type: 'text',
+          key: 'mode',
+          label: '同步方向',
+          default: 'upload',
+          placeholder: 'upload / download / both',
+          tip: 'upload=备份到远端；download=从远端还原到本地；both=双向合并（推荐）。双向/还原时若本地与远端都有改动，按下方「冲突策略」处理；内容无变化则跳过传输（增量）。',
+        },
+        {
+          type: 'text',
+          key: 'conflictStrategy',
+          label: '冲突策略',
+          default: 'merge',
+          placeholder: 'merge / local / remote',
+          tip: '本地与远端都改了同一列表时如何处理：merge=合并双方（并集，不丢歌）；local=以本地为准覆盖远端；remote=以远端为准覆盖本地。',
+        },
+        {
+          type: 'text',
+          key: 'scope',
+          label: '同步范围',
+          default: 'default,love,user',
+          placeholder: 'default,love,user 或 all',
+          tip: '逗号分隔，控制同步哪些列表：default=试听列表、love=我的收藏、user=我的列表（创建的歌单）；留空或 all=全部同步。试听列表是临时播放队列，跨设备同步通常意义不大，可去掉 default 只写 love,user。',
+        },
+        { type: 'switch', key: 'autoSync', label: '启用定时同步', default: false },
+        { type: 'number', key: 'interval', label: '同步间隔（分钟）', default: 60, tip: '≥1；仅在「启用定时同步」后生效。' },
+        { type: 'divider' },
+        { type: 'switch', key: 'encrypt', label: '加密备份文件（AES-256）', default: false, tip: '加密后即使云端泄露也无法读取收藏内容；还原需填写相同密码。' },
+        { type: 'password', key: 'encryptPassword', label: '加密密码', placeholder: '还原时需一致', default: '' },
+        { type: 'divider' },
+        {
+          type: 'buttons',
+          buttons: [
+            { label: '立即备份', action: 'backup' },
+            { label: '立即还原', action: 'restore' },
+            { label: '测试连接', action: 'test' },
+            { label: '浏览目录', action: 'browse' },
+          ],
+        },
+        {
+          type: 'info',
+          label: '目录列表（填好协议/地址后自动显示，或点「浏览目录」）',
+          text: () => (ctx && ctx.state.dirListing) || (state.dirListing || '尚未浏览'),
+        },
+        {
+          type: 'info',
+          label: '状态',
+          text: () => state.lastResult || '尚未执行',
+          suffix: () => (state.lastSyncAt ? `上次同步：${formatTime(state.lastSyncAt)}` : '从未同步'),
+        },
+      ]
+    }
+    /** 按当前协议（重）注册设置面板字段 */
+    const applySettings = () => {
+      if (api.registerSettings) {
+        api.registerSettings({ title: '我的列表同步', fields: buildFields() })
+      }
+    }
+
+    ctx = { api, state, startTimer, stopTimer, execute, doBrowse, applySettings, currentType, lastRegType: currentType(), _connSig: '', _browseTimer: null }
+    applySettings()
 
     api.hooks.on('app:ready', () => {
       api.logger.info(`已就绪：sync-favorites v${api.version}；协议 ${state.type}，方向 ${state.mode}`)
@@ -1436,6 +1587,12 @@ module.exports = {
     const prevInt = ctx.state.interval
     for (const key of Object.keys(DEFAULT_CONFIG)) {
       if (key in next) ctx.state[key] = next[key]
+    }
+    // 协议变化（如手工改 config.json）→ 按新协议重注册面板字段
+    const nowType = ctx.currentType()
+    if (ctx.lastRegType !== nowType) {
+      ctx.lastRegType = nowType
+      ctx.applySettings()
     }
     if (ctx.state.autoSync !== prevAuto || ctx.state.interval !== prevInt) {
       if (ctx.state.autoSync && ctx.state.interval > 0) ctx.startTimer()
@@ -1456,6 +1613,17 @@ module.exports = {
   /** 设置面板按钮点击 */
   onSettingsAction(action) {
     if (!ctx) return undefined
+    // 协议单选：写入配置并按新协议重注册面板字段（面板动作后会重拉 spec，字段立即切换）
+    if (action === 'use-webdav' || action === 'use-ftp' || action === 'use-smb') {
+      const t = action.slice(4)
+      if (ctx.currentType() !== t) {
+        ctx.state.type = t
+        ctx.api.setConfig({ type: t })
+        ctx.lastRegType = t
+        ctx.applySettings()
+      }
+      return undefined
+    }
     if (action === 'backup') return ctx.execute('upload')
     if (action === 'restore') return ctx.execute('download')
     if (action === 'test') return ctx.execute('test')

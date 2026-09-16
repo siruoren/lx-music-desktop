@@ -28,16 +28,16 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
 
 | 配置 | 说明 |
 | --- | --- |
-| 同步协议 `type` | `webdav` / `ftp` / `smb`（默认 `webdav`） |
-| 服务器地址 `host` | WebDAV 含协议，如 `https://dav.example.com`；FTP 仅主机名；**SMB 只填 IP/主机名，不要带 `smb://` 前缀** |
+| 同步协议 `type` | **单选按钮**：WebDAV / FTP / SMB（默认 `webdav`）。点击切换协议后，**下方只显示当前协议需要填写的字段**（WebDAV：忽略证书；FTP：FTPS/被动模式；SMB：域/工作组），当前协议按钮呈灰置选中态，右侧显示「当前协议」 |
+| 服务器地址 `host` | WebDAV 含协议，如 `http://192.168.31.120`、`https://dav.example.com`；FTP 仅主机名；**SMB 只填 IP/主机名，不要带 `smb://` 前缀**。注意：端口填到下方「端口」字段，不要拼进地址 |
 | 端口 `port` | 留空用默认（WebDAV 依协议；FTP 默认 21；SMB 默认 445） |
 | 远端目录 `remotePath` | 备份文件所在目录，默认 `lx-music/favorites`（不含文件名，上传时会自动逐级创建）。**WebDAV/群晖必须以「已存在的共享名」开头**，如 `homes/lx-music`、`photo/lx-music`；**SMB 首段是共享名**，如 `share/subdir`。填不准时先点「浏览目录」从根下列出的共享里抄一个。 |
 | 文件名 `filename` | 备份文件名，默认 `lx_favorites.json` |
 | 账号 / 密码 | 留空表示匿名 / 无认证 |
-| 域/工作组 `domain` | 仅 SMB 需要，如 `WORKGROUP`；留空表示无 |
-| 忽略证书校验 `insecure` | WebDAV 自签名证书时开启 |
-| 启用 FTPS `secure` | FTP 走 `AUTH TLS` 显式加密（控制 + 数据连接均加密） |
-| 被动模式 `passive` | FTP 默认开；连不上再尝试关 |
+| 域/工作组 `domain` | 仅选 SMB 协议时显示，如 `WORKGROUP`；留空表示无 |
+| 忽略证书校验 `insecure` | 仅选 WebDAV 协议时显示；自签名 HTTPS 证书时开启 |
+| 启用 FTPS `secure` | 仅选 FTP 协议时显示；走 `AUTH TLS` 显式加密（控制 + 数据连接均加密） |
+| 被动模式 `passive` | 仅选 FTP 协议时显示；默认开，连不上再尝试关 |
 | 超时 `timeout` | 单次网络请求超时（毫秒），默认 `20000` |
 | 同步方向 `mode` | `upload`=备份到远端；`download`=从远端还原到本地；`both`=双向合并（推荐）。双向/还原时若本地与远端都有改动，按「冲突策略」处理；内容无变化则跳过传输（增量） |
 | 冲突策略 `conflictStrategy` | 本地与远端都改了同一列表时如何处理：`merge`=合并双方（并集，不丢歌）；`local`=以本地为准覆盖远端；`remote`=以远端为准覆盖本地 |
