@@ -33,6 +33,12 @@ export interface HostContext {
    * 直接发起的请求也走代理（详见 ./sessionProxy.ts）。
    */
   setSessionProxy?: (pluginId: string, rules: string | null) => void
+  /** 主进程 electron 模块（仅 main 端提供），供插件构造 TouchBar 等原生 GUI 对象 */
+  electron?: any
+  /** 设置主窗口 Touch Bar（仅 main 端提供，委托 winBridge.setTouchBar） */
+  setTouchBar?: (pluginId: string, touchBar: any) => void
+  /** 向 renderer 发送播放控制指令（仅 main 端提供，委托 winBridge.controlPlayer） */
+  controlPlayer?: (pluginId: string, action: LX.Player.StatusButtonActions, data?: any) => void
 }
 
 export interface PatchRecord {
@@ -125,6 +131,19 @@ export function createPluginApi(
   // 请求也走插件提供的代理，否则只有 Node 的 http.Agent 被接管，播放仍会直连。
   if (ctx.setSessionProxy) {
     api.setSessionProxy = (rules: string | null) => { ctx.setSessionProxy!(pluginId, rules ?? null) }
+  }
+
+  // 主进程 electron 模块（仅 main 端）：供插件构造 TouchBar 等原生 GUI 对象
+  if (ctx.electron) {
+    api.electron = ctx.electron
+  }
+  // 设置主窗口 Touch Bar（仅 main 端，仅 macOS 生效）；窗口未就绪时由 winBridge 挂起
+  if (ctx.setTouchBar) {
+    api.setTouchBar = (touchBar: any) => { ctx.setTouchBar!(pluginId, touchBar) }
+  }
+  // 向 renderer 发送播放控制指令（仅 main 端，action 同 taskbar 按钮）
+  if (ctx.controlPlayer) {
+    api.controlPlayer = (action: LX.Player.StatusButtonActions, data?: any) => { ctx.controlPlayer!(pluginId, action, data) }
   }
 
   // 供卸载时回退使用

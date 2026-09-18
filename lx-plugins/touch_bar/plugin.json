@@ -1,0 +1,11 @@
+{
+  "id": "com.siruoren.touchbar",
+  "name": "touch_bar",
+  "version": "1.0.0",
+  "description": "在 macOS Touch Bar 上显示播放状态并控制播放：上一首 / 播放暂停 / 下一首 / 收藏，歌曲名与播放状态随播放实时更新。仅 macOS 生效。",
+  "author": "siruoren",
+  "platforms": ["main"],
+  "engines": {
+    "app": ">=2.0.0"
+  }
+}
