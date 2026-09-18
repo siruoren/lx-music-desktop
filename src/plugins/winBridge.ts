@@ -65,6 +65,6 @@ export function setTouchBar(touchBar: Electron.TouchBar | null): void {
 }
 
 /** 向 renderer 发送播放控制指令（action 同 taskbar 按钮：play/pause/prev/next/collect/unCollect/...） */
-export function controlPlayer(action: string, data?: unknown): void {
+export function controlPlayer(action: LX.Player.StatusButtonActions, data?: unknown): void {
   bridge?.controlPlayer(action, data)
 }

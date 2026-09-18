@@ -38,7 +38,7 @@ export interface HostContext {
   /** 设置主窗口 Touch Bar（仅 main 端提供，委托 winBridge.setTouchBar） */
   setTouchBar?: (pluginId: string, touchBar: any) => void
   /** 向 renderer 发送播放控制指令（仅 main 端提供，委托 winBridge.controlPlayer） */
-  controlPlayer?: (pluginId: string, action: string, data?: any) => void
+  controlPlayer?: (pluginId: string, action: LX.Player.StatusButtonActions, data?: any) => void
 }
 
 export interface PatchRecord {
