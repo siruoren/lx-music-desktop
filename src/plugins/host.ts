@@ -143,7 +143,7 @@ export function createPluginApi(
   }
   // 向 renderer 发送播放控制指令（仅 main 端，action 同 taskbar 按钮）
   if (ctx.controlPlayer) {
-    api.controlPlayer = (action: string, data?: any) => { ctx.controlPlayer!(pluginId, action, data) }
+    api.controlPlayer = (action: LX.Player.StatusButtonActions, data?: any) => { ctx.controlPlayer!(pluginId, action, data) }
   }
 
   // 供卸载时回退使用

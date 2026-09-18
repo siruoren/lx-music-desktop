@@ -98,7 +98,7 @@ const host: HostContext = {
   // 设置主窗口 Touch Bar（委托 winBridge；窗口未就绪时由它挂起、就绪后应用）
   setTouchBar: (_pluginId: string, touchBar: any) => { winSetTouchBar(touchBar) },
   // 向 renderer 发送播放控制指令（复用 taskbar 按钮通道）
-  controlPlayer: (_pluginId: string, action: string, data?: any) => { winControlPlayer(action, data) },
+  controlPlayer: (_pluginId: string, action: LX.Player.StatusButtonActions, data?: any) => { winControlPlayer(action, data) },
 }
 
 /** 在 init() 内调用：初始化插件管理并加载主进程插件（必须先于窗口创建完成同步部分） */

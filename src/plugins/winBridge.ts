@@ -15,7 +15,7 @@ interface WindowBridge {
   /** 返回当前主窗口（窗口可能被重建，故用 getter 始终取最新实例） */
   getWindow: () => BrowserWindow | null
   /** 向 renderer 发送播放控制指令（复用 taskbar 按钮通道，action 同 taskbar：play/pause/prev/next/collect/...） */
-  controlPlayer: (action: string, data?: unknown) => void
+  controlPlayer: (action: LX.Player.StatusButtonActions, data?: unknown) => void
 }
 
 let bridge: WindowBridge | null = null

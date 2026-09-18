@@ -205,7 +205,7 @@ export interface PluginApi {
    * 向 renderer 发送播放控制指令（**仅 main 端可用**）。
    * action 同任务栏按钮：`play` / `pause` / `prev` / `next` / `collect` / `unCollect` / ...
    */
-  controlPlayer?: (action: string, data?: any) => void
+  controlPlayer?: (action: LX.Player.StatusButtonActions, data?: any) => void
 }
 
 /** renderer 端独有的插件 API（注册音乐源、设置面板等 UI/渲染相关能力） */
