@@ -346,28 +346,66 @@ Touch Bar 是 Electron **主进程**专属 GUI，必须在主进程构造并经 
 
 ```js
 // platforms: ['main'] 的插件里
-const { TouchBar, TouchBarButton, TouchBarLabel, TouchBarSpacer } = api.electron
+// 注意：TouchBarButton / TouchBarLabel / TouchBarSpacer 是 TouchBar 类的**静态成员**，
+// 不是 electron 的顶层导出——必须从 TouchBar 上取，否则 new 时抛 "TouchBarLabel is not a constructor"。
+const { TouchBar } = api.electron
+const { TouchBarButton, TouchBarLabel, TouchBarSpacer } = TouchBar
 
-const songLabel = new TouchBarLabel({ label: '未播放' })
+// 扁平图标：用 nativeImage 现画、并 setTemplateImage(true)。
+// template image 只认 alpha 通道、颜色被系统统一为外观色 → 扁平、自动适配浅/深色；
+// 按钮只设 icon 不设 label，图标占据整个按钮、视觉更大更干净（贴近官方 Music app）。
+// TouchBarButton 的图标尺寸由系统固定、无法再放大，故让图形尽量填满画布以最大化显示。
+// 下面用纯 Node zlib 把 RGBA 编码成 PNG（无需任何 npm 依赖）：
+const { deflateSync } = require('zlib')
+function pngFromRGBA(w, h, rgba) { /* ... deflate 扫描线 → PNG ... */ }
+function makeIcon(draw) {
+  const buf = Buffer.alloc(48 * 48 * 4)               // 透明画布
+  const cv = { set(x, y) { /* 写 alpha=255 */ }, /* rect / tri 等 */ }
+  draw(cv)
+  const img = api.electron.nativeImage.createFromBuffer(pngFromRGBA(48, 48, buf))
+  img.setTemplateImage(true)
+  return img
+}
+const playIcon = makeIcon((c) => c.tri(16, 10, 16, 38, 38, 24))   // 右向三角
+const pauseIcon = makeIcon((c) => { c.rect(15, 10, 7, 28); c.rect(26, 10, 7, 28) })
+
+// TouchBarLabel 支持 fontSize（放大文字），TouchBarButton 不支持字号（系统固定）。
+// 要做“大字”，用 TouchBarLabel；按钮只能靠文字/图标标签，字号不可调。
+const lyricLabel = new TouchBarLabel({ label: '未播放', fontSize: 16 })
 const playBtn = new TouchBarButton({
-  label: isPlaying ? '⏸' : '▶',
+  icon: playIcon,
   click: () => api.controlPlayer(isPlaying ? 'pause' : 'play'),
 })
-const touchBar = new TouchBar({ items: [prevBtn, playBtn, nextBtn, new TouchBarSpacer({ size: 'flexible' }), songLabel] })
+const touchBar = new TouchBar({ items: [prevBtn, playBtn, nextBtn, new TouchBarSpacer({ size: 'flexible' }), lyricLabel] })
 api.setTouchBar(touchBar)                 // 挂到主窗口；窗口未就绪时自动挂起、就绪后应用
 
 // 订阅播放状态（与任务栏缩略图按钮共用同一路广播）
-api.app.event_app.on('player_status', ({ status, name, singer, collect }) => {
-  playBtn.label = status === 'playing' ? '⏸' : '▶'
-  songLabel.label = name ? `${name} - ${singer}` : '未播放'
-  api.setTouchBar(touchBar)               // label 改了即生效，再挂一次更稳妥
+api.app.event_app.on('player_status', ({ status, name, singer, collect, lyricLineText }) => {
+  playBtn.icon = status === 'playing' ? pauseIcon : playIcon   // 播放/暂停换图标
+  // 歌词优先；无歌词回退到歌名；都不带时保持“未播放”
+  // 长歌词可自己做 marquee：每隔 250ms 平移 lyricLabel.label 一个字符窗口（循环），
+  // 期间只改 .label 不重挂 TouchBar，避免闪烁；离散变化（切歌/换词）才重挂一次。
+  lyricLabel.label = (lyricLineText || (name ? `${name} - ${singer}` : '未播放'))
+  api.setTouchBar(touchBar)               // 改动后重挂一次更稳妥
 })
 ```
 
-- `api.electron`：宿主注入的主进程 `electron` 模块（`import * as Electron from 'electron'` 的命名空间），用于取 `TouchBar` 等原生类。**仅 main 端**。
+> **Touch Bar 的「后台常驻」限制（重要）**：macOS 的 Touch Bar 永远显示**当前最前台 App** 的内容。
+> `api.setTouchBar` 把自定义 Touch Bar 挂在主窗口上，只要 lx-music 是前台 App（即便窗口最小化）就会显示；
+> 一旦切到其它 App，显示的是那个 App 的 Touch Bar——这是系统行为，单靠 `setTouchBar` 无法突破。
+> 若要做到「像官方 Music app 那样切到别的 App 也常驻媒体控件」，需接入**系统级 Now Playing**
+> （macOS 的 `MPNowPlayingInfoCenter` / Chromium 的 `navigator.mediaSession`），属 App 层能力，需另立项，
+> 不在插件框架范围内。
+
+- `api.electron`：宿主注入的主进程 `electron` 模块（`import * as Electron from 'electron'` 的命名空间），用于取 `TouchBar` 等原生类。**仅 main 端**。**坑**：`TouchBarButton` / `TouchBarLabel` / `TouchBarSpacer` 是 `TouchBar` 的静态成员（即 `electron.TouchBar.TouchBarButton`），不是 `electron` 的顶层导出，务必 `const { TouchBarButton } = TouchBar`，直接 `electron.TouchBarButton` 会是 `undefined`。
 - `api.setTouchBar(touchBar | null)`：把 Touch Bar 挂到主窗口；传 `null` 移除。**仅 macOS 生效**（其它平台为 no-op）。窗口尚未创建时挂起、在 `ready-to-show` 自动应用，并在窗口重建后重新应用，因此插件无需关心窗口时序。
 - `api.controlPlayer(action, data?)`：向 renderer 发播放控制指令，**复用任务栏缩略图按钮通道**，`action` 取值同任务栏：`play` / `pause` / `prev` / `next` / `collect` / `unCollect` / `seek` / `mute` / `volume`。**仅 main 端**。
-- 播放状态来自 `api.app.event_app.on('player_status', cb)`（main 端事件总线，EventEmitter）；`status` 取 `'playing' | 'paused' | 'stoped' | 'error'`，并带 `name` / `singer` / `collect` / `progress` / `duration` 等字段。
+- 播放状态来自 `api.app.event_app.on('player_status', cb)`（main 端事件总线，EventEmitter）；`status` 取 `'playing' | 'paused' | 'stoped' | 'error'`，并带以下字段：
+  - `name` / `singer` / `albumName` / `picUrl`：曲目信息（切歌时带，进度/seek 事件不带，别据此清空标题）。
+  - `collect`：是否已收藏（boolean）。
+  - `progress` / `duration`：播放进度 / 总时长（秒）。
+  - `lyricLineText`：**当前歌词行**（renderer 在 `lyricLinePlay` 时广播，单行、不含换行）；`lyricLineAllText`：当前行 + 扩展（翻译）以 `\n` 连接。空串表示暂无（如间奏），应回退到 `name`。
+  - `lyric` / `tlyric` / `rlyric` / `lxlyric`：整首歌词原文（切歌/歌词更新时带），一般无需在 Touch Bar 上整首显示。
 
 > 底层：`src/plugins/winBridge.ts` 是注册式桥——`winMain/main.ts` 在窗口创建后 `registerMainWindowBridge({ getWindow, controlPlayer })`，插件宿主把 `api.setTouchBar` / `api.controlPlayer` 转发过去。用注册回调而非直接 import `winMain` 是为了避免循环依赖。
 
