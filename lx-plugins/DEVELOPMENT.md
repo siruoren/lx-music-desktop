@@ -219,6 +219,9 @@ module.exports = {
 | `api.registerSettings` | ❌ | ✅ |
 | `api.registerMusicSource` / `unregisterMusicSource` | ❌ | ✅ |
 | `api.setSessionProxy` | ✅ | ❌ |
+| `api.electron` | ✅ | ❌ |
+| `api.setTouchBar` | ✅（仅 macOS 生效） | ❌ |
+| `api.controlPlayer` | ✅ | ❌ |
 | `require('...')` | ✅ `createRequire(入口)`：能加载插件目录内文件与 node 内置模块 | ✅ `window.require`（主窗口 `nodeIntegration: true`） |
 | 用 `window` / `document` | ❌ | ✅ |
 
@@ -334,6 +337,39 @@ api.registerMusicSource('my-source', '我的源', { /* musicSdk 源模块：musi
 
 让 `<audio>` 播放、`<img>` 封面等**由 Chromium 直接发起**的请求也走代理。详见 README 的「[代理为什么有两层](./README.md#代理为什么有两层重要)」——
 简单说：**只接管 Node 的 http.Agent，播放依然直连**，必须两层都覆盖。传 `null` 撤销接管、回到 app 自身的网络代理。
+
+### 5.10 `api.electron` / `api.setTouchBar` / `api.controlPlayer` —— Touch Bar 与播放控制（仅 main）
+
+Touch Bar 是 Electron **主进程**专属 GUI，必须在主进程构造并经 `win.setTouchBar()` 设置；
+按钮点击再向 renderer 发播放控制指令、并接收播放状态回显。这三个能力配合即可做出
+「在 Touch Bar 上控制播放」的插件（参考 `lx-plugins/touch_bar`）。
+
+```js
+// platforms: ['main'] 的插件里
+const { TouchBar, TouchBarButton, TouchBarLabel, TouchBarSpacer } = api.electron
+
+const songLabel = new TouchBarLabel({ label: '未播放' })
+const playBtn = new TouchBarButton({
+  label: isPlaying ? '⏸' : '▶',
+  click: () => api.controlPlayer(isPlaying ? 'pause' : 'play'),
+})
+const touchBar = new TouchBar({ items: [prevBtn, playBtn, nextBtn, new TouchBarSpacer({ size: 'flexible' }), songLabel] })
+api.setTouchBar(touchBar)                 // 挂到主窗口；窗口未就绪时自动挂起、就绪后应用
+
+// 订阅播放状态（与任务栏缩略图按钮共用同一路广播）
+api.app.event_app.on('player_status', ({ status, name, singer, collect }) => {
+  playBtn.label = status === 'playing' ? '⏸' : '▶'
+  songLabel.label = name ? `${name} - ${singer}` : '未播放'
+  api.setTouchBar(touchBar)               // label 改了即生效，再挂一次更稳妥
+})
+```
+
+- `api.electron`：宿主注入的主进程 `electron` 模块（`import * as Electron from 'electron'` 的命名空间），用于取 `TouchBar` 等原生类。**仅 main 端**。
+- `api.setTouchBar(touchBar | null)`：把 Touch Bar 挂到主窗口；传 `null` 移除。**仅 macOS 生效**（其它平台为 no-op）。窗口尚未创建时挂起、在 `ready-to-show` 自动应用，并在窗口重建后重新应用，因此插件无需关心窗口时序。
+- `api.controlPlayer(action, data?)`：向 renderer 发播放控制指令，**复用任务栏缩略图按钮通道**，`action` 取值同任务栏：`play` / `pause` / `prev` / `next` / `collect` / `unCollect` / `seek` / `mute` / `volume`。**仅 main 端**。
+- 播放状态来自 `api.app.event_app.on('player_status', cb)`（main 端事件总线，EventEmitter）；`status` 取 `'playing' | 'paused' | 'stoped' | 'error'`，并带 `name` / `singer` / `collect` / `progress` / `duration` 等字段。
+
+> 底层：`src/plugins/winBridge.ts` 是注册式桥——`winMain/main.ts` 在窗口创建后 `registerMainWindowBridge({ getWindow, controlPlayer })`，插件宿主把 `api.setTouchBar` / `api.controlPlayer` 转发过去。用注册回调而非直接 import `winMain` 是为了避免循环依赖。
 
 ---
 
@@ -536,6 +572,7 @@ grep -rnF '=== Plugin Manager ===' src
 
 | 时间 | 变化 | 关联提交 |
 | --- | --- | --- |
+| 2026-09-18 | 新增主进程插件能力 `api.electron` / `api.setTouchBar` / `api.controlPlayer`（Touch Bar 与播放控制），配套 `src/plugins/winBridge.ts` 注册式桥；新增 `lx-plugins/touch_bar` 插件 | 本次改动 |
 | 2026-09-15 | 构建产物名改为带版本号（`<插件名>-<版本>.lxplugin`）；构建前自动清理该项目在输出目录里的旧产物；CI 改用 `dist/*.lxplugin` 通配收集，快速通道先把非本版本的插件附件删掉 | 本次改动 |
 | 2026-09-15 | 插件管理入口从「设置 → 插件管理」标签页迁到**侧边栏独立页** `/plugins`（`ui/Plugins.vue` + `#icon-plugin`）；设置里不再有该标签页 | `cdb2f13d` |
 | 2026-09-15 | 备份/同步相关配置文档细化（远端目录、文件名、超时） | `e138efb5` |

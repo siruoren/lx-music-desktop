@@ -13,6 +13,7 @@
  * 插件目录基于 app.getPath('userData')，因此必须在上游 setUserDataPath() 之后调用（init 阶段天然满足）。
  */
 import { app, dialog } from 'electron'
+import * as Electron from 'electron'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs'
 import { basename, join } from 'path'
 import { PluginManager } from './manager'
@@ -27,6 +28,7 @@ import type { PluginRuntimeState } from './ipc'
 import { getAppVersion } from './manifest'
 import { MAX_PLUGIN_FILE_SIZE } from './format'
 import { setPluginSessionProxy } from './sessionProxy'
+import { setTouchBar as winSetTouchBar, controlPlayer as winControlPlayer } from './winBridge'
 import type { PluginInfo, PluginOperationResult } from './types'
 
 let manager: PluginManager | null = null
@@ -91,6 +93,12 @@ const host: HostContext = {
     else sessionProxyOwners.delete(pluginId)
     setPluginSessionProxy(rules)
   },
+  // 主进程 electron 模块：供插件构造 TouchBar 等原生 GUI 对象（仅 main 端）
+  electron: Electron,
+  // 设置主窗口 Touch Bar（委托 winBridge；窗口未就绪时由它挂起、就绪后应用）
+  setTouchBar: (_pluginId: string, touchBar: any) => { winSetTouchBar(touchBar) },
+  // 向 renderer 发送播放控制指令（复用 taskbar 按钮通道）
+  controlPlayer: (_pluginId: string, action: string, data?: any) => { winControlPlayer(action, data) },
 }
 
 /** 在 init() 内调用：初始化插件管理并加载主进程插件（必须先于窗口创建完成同步部分） */

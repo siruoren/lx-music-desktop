@@ -189,6 +189,23 @@ export interface PluginApi {
    *   回到 app 自身的网络代理设置。
    */
   setSessionProxy?: (rules: string | null) => void
+  /**
+   * 主进程 electron 模块（**仅 main 端可用**）。
+   * 用于构造 TouchBar 等原生 GUI 对象：
+   *   `const { TouchBar, TouchBarButton, TouchBarLabel, TouchBarSpacer } = api.electron`
+   */
+  electron?: any
+  /**
+   * 设置主窗口的 Touch Bar（**仅 main 端可用**，仅 macOS 生效）。
+   * 传入用 `api.electron.TouchBar` 构造的实例；传 `null` 移除。
+   * 窗口尚未创建时挂起、窗口就绪后自动应用，并在窗口重建后重新应用。
+   */
+  setTouchBar?: (touchBar: any) => void
+  /**
+   * 向 renderer 发送播放控制指令（**仅 main 端可用**）。
+   * action 同任务栏按钮：`play` / `pause` / `prev` / `next` / `collect` / `unCollect` / ...
+   */
+  controlPlayer?: (action: string, data?: any) => void
 }
 
 /** renderer 端独有的插件 API（注册音乐源、设置面板等 UI/渲染相关能力） */

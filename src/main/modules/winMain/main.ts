@@ -9,6 +9,8 @@ import { encodePath } from '@common/utils/electron'
 // === Plugin Manager === 插件可接管 Chromium 会话代理（如 SOCKS5），
 // 使 <audio>/<img> 等由 Chromium 直接发起的请求（音乐播放、封面）也走代理。
 import { MAIN_WINDOW_PARTITION, registerMainSessionProxyRestore, resolveSessionProxyRules } from '../../../plugins/sessionProxy'
+// === Plugin Manager === 主窗口桥接：让插件（如 Touch Bar 插件）能设置 Touch Bar、遥控播放。
+import { registerMainWindowBridge, reapplyTouchBar } from '../../../plugins/winBridge'
 
 let browserWindow: Electron.BrowserWindow | null = null
 
@@ -48,6 +50,8 @@ const winEvent = () => {
     if (!global.envParams.cmdParams.hidden) {
       showWindow()
       setThumbarButtons()
+      // 窗口（重建后）重新就绪：把插件挂起的 Touch Bar 重新挂上
+      reapplyTouchBar()
     }
     global.lx.event_app.main_window_ready_to_show()
   })
@@ -119,6 +123,12 @@ export const createWindow = () => {
   // global.lx.mainWindowClosed = false
   // browserWindow.webContents.openDevTools()
   global.lx.event_app.main_window_created(browserWindow)
+
+  // === Plugin Manager === 把主窗口与播放控制能力注册给插件桥（窗口可能被重建，每次都注册以刷新引用）
+  registerMainWindowBridge({
+    getWindow: () => browserWindow,
+    controlPlayer: sendTaskbarButtonClick,
+  })
 }
 
 export const isExistWindow = (): boolean => !!browserWindow
