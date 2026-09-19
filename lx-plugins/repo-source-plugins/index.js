@@ -10,6 +10,10 @@
  *      更新结果会显示在插件设置面板里。
  *   4. 已导入的源记录在本插件自己的账本里，配置与账本都保存在**插件目录**的
  *      config.json（<插件目录>/config.json），与 app 自身设置完全隔离。
+ *   5. 更新中途被中断（关闭/重载应用、禁用插件）时，宿主会**同步强制终止**本插件的
+ *      后台任务（api.onQuit 中断全部进行中的下载）；「正在更新…」进度存于**运行期状态**
+ *      （api.setRuntime，只存内存、每次启动自动清空、绝不落盘）—— 所以重启应用后设置
+ *      面板不会残留「处理中」，而是显示上次的最终结果。更新卡住时可直接退出应用。
  *
  *   实现要点：客户端「自定义源」的导入接口每次都会生成新的源 id，无法原地覆盖，
  *   所以「更新」=「先删除本地同名源、再导入新内容」。匹配按**源名称**（脚本头
@@ -22,7 +26,7 @@
  *   这一段用来演示插件的「运行时覆盖原功能」能力（api.patch）。
  *
  * 入口以 CommonJS 导出，构建脚本会把它包进单个 .lxplugin 文件：
- *   module.exports = { setup, uninstall, onUpdate, onConfigChange, onSettingsAction }
+ *   module.exports = { setup, uninstall, onUpdate, onConfigChange, onSettingsAction, onQuit }
  */
 'use strict'
 
@@ -53,6 +57,30 @@ const DEFAULT_CONFIG = {
 
 /** setup 时写入，供 module 上的生命周期回调使用 */
 let ctx = null
+
+/* ---------- 进行中任务的同步中断（应用退出 / 插件卸载 / 用户取消） ---------- */
+
+/** 正在进行的下载请求：退出/卸载时同步 destroy，避免卡住的连接拖住退出 */
+const activeRequests = new Set()
+/** 当前更新任务的取消态（模块级：供 app:quit / uninstall / 手动取消统一取消） */
+let currentRun = null
+
+/**
+ * 同步中断所有进行中的下载与当前更新任务。
+ * @returns {number} 被中断的请求数
+ */
+function abortActiveWork(reason) {
+  if (currentRun) {
+    currentRun.cancelled = true
+    currentRun.reason = reason
+  }
+  const reqs = [...activeRequests]
+  activeRequests.clear()
+  for (const req of reqs) {
+    try { req.destroy(new Error(reason)) } catch { /* ignore */ }
+  }
+  return reqs.length
+}
 
 /** ============================ 小工具 ============================ */
 
@@ -140,6 +168,9 @@ function fetchText(url, redirects) {
       res.on('end', () => { resolve(Buffer.concat(chunks).toString('utf8')) })
       res.on('error', reject)
     })
+    // 登记以便退出/取消时同步中断；请求结束后（成功/失败/被 destroy）自动移除
+    activeRequests.add(req)
+    req.on('close', () => { activeRequests.delete(req) })
     req.setTimeout(FETCH_TIMEOUT, () => { req.destroy(new Error(`下载超时（${FETCH_TIMEOUT}ms）`)) })
     req.on('error', reject)
   })
@@ -210,6 +241,20 @@ module.exports = {
       })
     }
 
+    // 启动时清理「上次更新进行中被强杀」留下的瞬时状态（旧版本会把“正在更新…”写进 config.json），
+    // 否则设置面板重启后会一直显示「处理中」。清理后再落盘，避免下次又读到。
+    if (typeof state.lastResult === 'string' && state.lastResult.startsWith('正在更新')) {
+      state.lastResult = '上次更新被中断（应用已退出），可点击「立即导入 / 更新」重试'
+      persist()
+    }
+
+    // 应用退出（关闭窗口/重载）时由宿主**同步**调用：中断所有进行中的下载，
+    // 终止本插件的后台任务。这不是卸载——插件仍保持已加载状态，无需回退 patch。
+    api.onQuit(() => {
+      const n = abortActiveWork('应用退出，已中断更新')
+      if (n > 0) api.logger.info(`应用退出：已中断 ${n} 个进行中的下载请求`)
+    })
+
     /** 客户端「自定义源」能力的桥（由 renderer 宿主暴露在 window.lx.plugins.userApi） */
     const bridge = () => {
       const plugins = api.app && api.app.plugins
@@ -239,8 +284,10 @@ module.exports = {
         return
       }
       running = true
-      state.lastResult = `正在更新（${reason}）…`
-      persist()
+      currentRun = { cancelled: false, reason: '' }
+      // 进度只放「运行期状态」（api.setRuntime：宿主保证每次启动自动清空、只存内存不落盘）——
+      // 就算更新中途被强杀，下次启动面板也不会残留「处理中」。config.json 只落最终结果。
+      api.setRuntime({ processing: true, progress: reason })
       try {
         const listText = await fetchText(state.listUrl, 5)
         const urls = parseList(listText)
@@ -261,6 +308,8 @@ module.exports = {
         const now = Date.now()
         const lines = []
         const next = []
+        // 取消时用于保留“尚未处理”的旧账本条目，避免半途中断丢账本
+        const remaining = new Set(urls)
         let updated = 0
         let added = 0
         let kept = 0
@@ -268,9 +317,12 @@ module.exports = {
         let failed = 0
 
         for (const url of urls) {
+          if (currentRun.cancelled) break
+          remaining.delete(url)
           const prev = prevMap.get(url)
           try {
             const script = await fetchText(url, 5)
+            if (currentRun.cancelled) break
             if (!script.trim()) throw new Error('下载到的文件为空')
             if (!/^\/\*[\s\S]+?\*\//.test(script.replace(/^\uFEFF/, ''))) {
               throw new Error('不是有效的自定义源脚本（缺少文件头注释块）')
@@ -364,10 +416,22 @@ module.exports = {
               lines.push(`新增导入：${name}${version ? ` v${version}` : ''}`)
             }
           } catch (err) {
+            if (currentRun.cancelled) break
             failed++
             if (prev) next.push(prev)
             lines.push(`失败：${url} —— ${err.message}`)
           }
+        }
+
+        if (currentRun.cancelled) {
+          // 被中断：已处理的用新账本，尚未处理的沿用旧账本条目，避免丢账本
+          for (const item of state.sources) {
+            if (remaining.has(item.url)) next.push(item)
+          }
+          state.sources = next
+          state.lastResult = `更新已中断（${currentRun.reason || '已取消'}）：已处理 ${updated + added + kept + reused} 个，未处理 ${remaining.size} 个`
+          api.logger.warn(`远程自定义源更新被中断：${currentRun.reason || '已取消'}`)
+          return
         }
 
         // 列表里已去掉、但之前导入过的源：保留账本，不自动删除（避免误删用户仍在用的源）
@@ -382,10 +446,18 @@ module.exports = {
           lines.join('\n')
         api.logger.info(`远程自定义源更新完成：更新 ${updated}、新增 ${added}、未变化 ${kept}、失败 ${failed}`)
       } catch (err) {
-        state.lastResult = `更新失败（${formatTime(Date.now())}）：${err.message}`
-        api.logger.error('更新远程自定义源失败：', err)
+        if (currentRun && currentRun.cancelled) {
+          // 列表文件下载本身就被中断的情况
+          state.lastResult = `更新已中断（${currentRun.reason || '已取消'}）`
+          api.logger.warn(`远程自定义源更新被中断：${err.message}`)
+        } else {
+          state.lastResult = `更新失败（${formatTime(Date.now())}）：${err.message}`
+          api.logger.error('更新远程自定义源失败：', err)
+        }
       } finally {
         running = false
+        currentRun = null
+        api.setRuntime({ processing: false })
         persist()
       }
     }
@@ -448,7 +520,17 @@ module.exports = {
             ],
           },
           { type: 'divider' },
-          { type: 'info', label: '状态', text: () => state.lastResult || '尚未执行' },
+          {
+            type: 'info',
+            label: '状态',
+            text: () => {
+              // 「进行中」读运行期状态（api.setRuntime，启动自动清空）——重启后绝不残留「处理中」；
+              // 最终结果读 config（跨启动保留）。
+              const rt = api.getRuntime()
+              if (rt.processing) return `正在更新（${rt.progress || '…'}）…`
+              return state.lastResult || '尚未执行'
+            },
+          },
           {
             type: 'list',
             label: '已导入的远程源',
@@ -506,7 +588,8 @@ module.exports = {
       }
       // 延迟一点再跑：让 app 自身的初始化（含自定义源列表载入）先完成，
       // 否则两边都在写同一份列表，可能相互覆盖。
-      setTimeout(() => { void updateAll('启动自动更新') }, STARTUP_DELAY)
+      // 用宿主代管的 setTimeout：应用退出 / 插件卸载时会被宿主自动清除。
+      api.setTimeout(() => { void updateAll('启动自动更新') }, STARTUP_DELAY)
     })
   },
 
@@ -530,8 +613,10 @@ module.exports = {
 
   /** 卸载/禁用时调用（宿主还会自动回退 patch 与 hooks） */
   uninstall() {
+    // 同步中断所有进行中的下载，避免“卡住”的更新在插件已卸载后还在后台跑
+    const n = abortActiveWork('插件已卸载，已中断更新')
     ctx = null
-    console.log('[plugin:repo-source-plugins] 已卸载：搜索增强已还原；已导入的自定义源仍保留在「自定义源」列表中')
+    console.log(`[plugin:repo-source-plugins] 已卸载：搜索增强已还原${n ? `，已中断 ${n} 个下载` : ''}；已导入的自定义源仍保留在「自定义源」列表中`)
   },
 
   /** 插件被更新后调用，oldVersion 为旧版本号 */

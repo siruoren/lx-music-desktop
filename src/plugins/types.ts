@@ -88,6 +88,12 @@ export interface PluginModule {
   onConfigChange?: (config: Record<string, any>) => void | Promise<void>
   /** 插件设置面板上的按钮被点击时调用（action 为字段上声明的动作名） */
   onSettingsAction?: (action: string, config: Record<string, any>) => void | Promise<void>
+  /**
+   * 应用退出（关闭窗口 / 重载页面）时调用：**终止插件的后台工作**（下载、子进程、定时器等）。
+   * ⚠️ 宿主同步调用且不 await —— 请只做同步清理；退出 ≠ 卸载，插件仍处于已加载状态，
+   * 不需要（也不应该）在这里回退 patch / 反订阅 hooks。
+   */
+  onQuit?: () => void
 }
 
 /**
@@ -175,6 +181,26 @@ export interface PluginApi {
   getData: <T = any>(key: string, defaultValue?: T) => T
   /** 写入插件私有持久化数据 */
   setData: (key: string, value: any) => void
+  /**
+   * 登记「应用退出时的同步清理回调」（宿主强制调用、幂等），返回撤销函数。
+   * 与 module.onQuit 等价，适合在 setup 闭包里就地登记。
+   */
+  onQuit: (handler: () => void) => () => void
+  /**
+   * 登记一个同步资源回收函数（子进程 kill / socket destroy / 关闭句柄等），返回撤销函数。
+   * 应用退出与插件卸载时宿主都会强制调用。
+   */
+  track: (disposer: () => void) => () => void
+  /** 宿主代管的 setTimeout：应用退出 / 插件卸载时自动清除 */
+  setTimeout: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  /** 宿主代管的 setInterval：应用退出 / 插件卸载时自动清除 */
+  setInterval: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void
+  clearInterval: (handle: ReturnType<typeof setTimeout>) => void
+  /** 读取本插件的临时执行状态（每次启动 / 重载自动清空，只存内存、绝不落盘） */
+  getRuntime: <T = Record<string, any>>() => T
+  /** 合并写入临时执行状态（进行中标记、进度等瞬时数据；重启即重置，不会残留「处理中」） */
+  setRuntime: (patch: Record<string, any>) => Record<string, any>
   /** 客户端全局对象（main 端为 global.lx，renderer 端为 window.lx） */
   app: any
   /**

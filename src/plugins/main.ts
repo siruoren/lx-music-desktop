@@ -109,6 +109,16 @@ export async function initPluginManager(): Promise<void> {
   manager = new PluginManager(pluginsDir, host)
   registerIpc()
 
+  // 应用退出时**同步终止**所有主进程插件的后台工作（定时器 / 子进程 / 下载…）。
+  // 注意：这不是卸载——不调 uninstall、不回退 patch，只终止后台任务，避免插件派生的
+  // 子进程（如 SMB 的 smbclient / mount_smbfs）或挂载点在应用退出后残留。
+  // before-quit 时还能同步执行代码；will-quit 兜底（shutdownAll 幂等，只生效一次）。
+  const shutdownPlugins = () => {
+    try { manager?.shutdownAll() } catch (err) { console.error('[plugin] 退出终止插件后台任务失败：', err) }
+  }
+  app.on('before-quit', shutdownPlugins)
+  app.on('will-quit', shutdownPlugins)
+
   // 暴露宿主 API 给源码扩展点与主进程插件
   const hostApi = createPluginApi(host, '_host_', getAppVersion(), pluginsDir) as any
   hostApi.manager = {

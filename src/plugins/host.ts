@@ -56,6 +56,16 @@ export function createPluginApi(
   const patchRecords: PatchRecord[] = []
   const disposers: Array<() => void> = []
 
+  // —— 生命周期资源登记（应用退出 / 插件卸载时由宿主**同步**强制回收）——
+  // 宿主代管的定时器与登记的清理回调集中在这里，runShutdown 一次性回收，
+  // 插件忘记清理也不会把后台任务（下载、子进程、定时同步…）残留到退出之后。
+  const timers = new Set<ReturnType<typeof setTimeout>>()
+  const quitCallbacks: Array<() => void> = []
+  const trackedDisposers: Array<() => void> = []
+  /** 临时执行状态：每次加载都从空开始（进程重启 / 重载后自动重置），只存内存、绝不落盘 */
+  let runtime: Record<string, any> = {}
+  let shutdownDone = false
+
   // 作用域化的 hooks：订阅时自动记录反订阅函数
   const scopedHooks = {
     on: (event: string, handler: (...args: any[]) => any) => {
@@ -106,7 +116,63 @@ export function createPluginApi(
     },
     getData: (key: string, def?: any) => ctx.getData(pluginId, key, def),
     setData: (key: string, value: any) => { ctx.setData(pluginId, key, value) },
+
+    // —— 生命周期资源登记：应用退出 / 插件卸载时由宿主同步强制回收 ——
+
+    /** 登记「应用退出时执行的同步清理回调」，返回撤销函数（与 module.onQuit 等价） */
+    onQuit: (handler: () => void) => {
+      if (typeof handler !== 'function') return () => {}
+      quitCallbacks.push(handler)
+      return () => {
+        const i = quitCallbacks.indexOf(handler)
+        if (i !== -1) quitCallbacks.splice(i, 1)
+      }
+    },
+    /** 登记一个同步资源回收函数（子进程 kill / socket destroy / 关闭句柄等），返回撤销函数 */
+    track: (disposer: () => void) => {
+      if (typeof disposer !== 'function') return () => {}
+      trackedDisposers.push(disposer)
+      return () => {
+        const i = trackedDisposers.indexOf(disposer)
+        if (i !== -1) trackedDisposers.splice(i, 1)
+      }
+    },
+    /** 宿主代管的 setTimeout：退出 / 卸载时自动清除，回调异常被捕获不影响其它逻辑 */
+    setTimeout: (fn: () => void, ms: number) => {
+      const handle = setTimeout(() => {
+        timers.delete(handle)
+        try { fn() } catch (err) { console.error(`[plugin:${pluginId}] setTimeout 回调失败：`, err) }
+      }, ms)
+      timers.add(handle)
+      return handle
+    },
+    /** 宿主代管的 setInterval：退出 / 卸载时自动清除，回调异常被捕获不影响后续触发 */
+    setInterval: (fn: () => void, ms: number) => {
+      const handle = setInterval(() => {
+        try { fn() } catch (err) { console.error(`[plugin:${pluginId}] setInterval 回调失败：`, err) }
+      }, ms)
+      timers.add(handle)
+      return handle
+    },
+    clearTimeout: (handle: ReturnType<typeof setTimeout>) => {
+      timers.delete(handle)
+      clearTimeout(handle)
+    },
+    clearInterval: (handle: ReturnType<typeof setTimeout>) => {
+      timers.delete(handle)
+      clearInterval(handle)
+    },
+
+    // —— 临时执行状态：每次启动 / 重载自动清空（这正是「启动后执行状态重载」的保证）——
+    getRuntime: (): Record<string, any> => runtime,
+    setRuntime: (patch: Record<string, any>): Record<string, any> => {
+      runtime = Object.assign({}, runtime, patch ?? {})
+      return runtime
+    },
   }
+
+  // 供 runShutdown 使用的生命周期登记（挂在 api 上，宿主各处都能拿到）
+  ;(api as any).__lifecycle = { timers, quitCallbacks, trackedDisposers, get done() { return shutdownDone }, set done(v: boolean) { shutdownDone = v } }
 
   if (ctx.registerMusicSource) {
     api.registerMusicSource = ctx.registerMusicSource
@@ -156,7 +222,44 @@ export function getPatchRecords(api: PluginApi): PatchRecord[] {
   return (api as any).__patchRecords ?? []
 }
 
+/**
+ * 同步强制回收插件登记的运行期资源（宿主在「应用退出」与「卸载/禁用插件」时调用）：
+ *  1. 清掉所有通过 api.setTimeout / api.setInterval 建立的定时器；
+ *  2. 依次执行 api.onQuit / api.track 登记的同步清理回调（中断下载、kill 子进程等）。
+ *
+ * 幂等：重复调用只生效一次；全程捕获异常，单个回调失败不影响其它资源回收。
+ * 注意：这**不是卸载**——patch / hooks 不在此回退，插件本体保持已加载状态；
+ * 回退现场是 disposeApi（卸载）的职责。
+ *
+ * @returns 实际回收的资源数量（定时器 + 回调），供日志展示
+ */
+export function runShutdown(api: PluginApi): number {
+  const lc: any = (api as any).__lifecycle
+  if (!lc || lc.done) return 0
+  lc.done = true
+  let collected = 0
+  for (const handle of [...lc.timers as Set<ReturnType<typeof setTimeout>>]) {
+    try { clearTimeout(handle); clearInterval(handle) } catch { /* noop */ }
+  }
+  collected += lc.timers.size
+  lc.timers.clear()
+  const callbacks: Array<() => void> = [...lc.quitCallbacks, ...lc.trackedDisposers]
+  lc.quitCallbacks.length = 0
+  lc.trackedDisposers.length = 0
+  for (const fn of callbacks) {
+    try {
+      fn()
+      collected++
+    } catch (err) {
+      console.error(`[plugin:${api.id}] 退出清理回调执行失败：`, err)
+    }
+  }
+  return collected
+}
+
 export function disposeApi(api: PluginApi): void {
+  // 先回收插件登记的运行期资源（定时器 / 清理回调），再反订阅 hooks
+  runShutdown(api)
   const disposers: Array<() => void> = (api as any).__disposers ?? []
   for (const d of disposers) {
     try { d() } catch { /* noop */ }
