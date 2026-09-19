@@ -7,7 +7,9 @@ let userApis: LX.UserApi.UserApiInfo[] | null
 let scripts = new Map<string, string>()
 
 const saveData = () => {
-  getStore(STORE_NAMES.USER_API).set('userApis', userApis!.map(api => {
+  // 用非阻塞写盘：批量导入自定义源时，每个源原本都会同步重写整个 userApi.json，
+  // 海量源会把主线程（含渲染进程）卡死；改为异步原子写入后不再阻塞，且多次调用会自动合并。
+  getStore(STORE_NAMES.USER_API).setAsync('userApis', userApis!.map(api => {
     return {
       ...api,
       script: scripts.get(api.id),

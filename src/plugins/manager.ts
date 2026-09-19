@@ -12,7 +12,7 @@
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, statSync, cpSync } from 'fs'
 import { basename, join, resolve } from 'path'
-import { EnabledState, PluginConfigStore } from './storage'
+import { EnabledState, PluginConfigStore, atomicWrite } from './storage'
 import { readManifest, checkCompatibility } from './manifest'
 import { compareVersion } from './semver'
 import { createPluginApi, getPatchRecords, disposeApi } from './host'
@@ -532,7 +532,8 @@ export class PluginManager {
     fn()
     for (const item of preserved) {
       try {
-        writeFileSync(join(target, item.name), item.content, 'utf-8')
+        // 用原子写入恢复，避免更新插件途中被杀导致 config.json / data.json 只剩半截
+        atomicWrite(join(target, item.name), item.content)
       } catch (err) {
         console.error(`[plugin] 恢复 ${item.name} 失败（${target}）：`, err)
       }

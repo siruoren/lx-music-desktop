@@ -1,6 +1,8 @@
 import { closeWindow } from './main'
 import { getUserApis, importApi as handleImportApi, removeApi as handleRemoveApi, setAllowShowUpdateAlert as saveAllowShowUpdateAlert } from './utils'
 import { loadApi, setAllowShowUpdateAlert as setRendererEventAllowShowUpdateAlert, init } from './rendererEvent/rendererEvent'
+import getStore from '@main/utils/store'
+import { STORE_NAMES } from '@common/constants'
 
 let userApiId: string | null
 
@@ -44,6 +46,12 @@ export default () => {
   init()
 
   global.lx.event_app.on('main_window_close', () => {
+    // 优雅退出前把尚未落盘的自定义源改动同步写盘，避免异步写入的尾差丢失
+    try {
+      getStore(STORE_NAMES.USER_API).flush()
+    } catch {
+      /* ignore */
+    }
     void closeWindow()
   })
 }
