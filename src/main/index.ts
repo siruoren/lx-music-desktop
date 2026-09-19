@@ -18,6 +18,7 @@ import { initPluginManager } from '../plugins/main'
 // 初始化应用
 const init = () => {
   console.log('init')
+  if (process.env.BUILD_WIN7 == 'true') import('./utils/winLegacy')
   void initAppSetting().then(() => {
     // === Plugin Manager：先同步注册插件管理 IPC（避免渲染进程过早调用），
     // 并异步加载已启用的主进程插件；初始化失败不影响主程序启动 ===
