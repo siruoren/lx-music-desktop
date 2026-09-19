@@ -172,7 +172,7 @@ export function createPluginApi(
   }
 
   // 供 runShutdown 使用的生命周期登记（挂在 api 上，宿主各处都能拿到）
-  ;(api as any).__lifecycle = { timers, quitCallbacks, trackedDisposers, get done() { return shutdownDone }, set done(v: boolean) { shutdownDone = v } }
+  ;(api).__lifecycle = { timers, quitCallbacks, trackedDisposers, get done() { return shutdownDone }, set done(v: boolean) { shutdownDone = v } }
 
   if (ctx.registerMusicSource) {
     api.registerMusicSource = ctx.registerMusicSource

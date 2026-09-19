@@ -543,7 +543,7 @@ export async function initUserPlugins(_app?: any): Promise<void> {
     quitHandled = true
     shutdownAllPlugins(reason)
   }
-  window.addEventListener('beforeunload', () => handleQuit('beforeunload'))
-  window.addEventListener('unload', () => handleQuit('unload'))
-  window.addEventListener('pagehide', () => handleQuit('pagehide'))
+  window.addEventListener('beforeunload', () => { handleQuit('beforeunload') })
+  window.addEventListener('unload', () => { handleQuit('unload') })
+  window.addEventListener('pagehide', () => { handleQuit('pagehide') })
 }
