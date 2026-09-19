@@ -254,12 +254,17 @@ module.exports = {
         for (const local of (userApi.list() || [])) {
           if (local && local.id && local.name && !nameMap.has(local.name)) nameMap.set(local.name, local)
         }
+        // 本轮已导入的脚本内容哈希 → apiId：列表里若多个地址指向同一份脚本，
+        // 只在第一次真正导入，其余直接复用其 apiId，避免重复 importApi（每次都会同步重写
+        // 整个自定义源清单，大量源时把主线程卡死）也避免上游报“脚本内容相同”。
+        const importedByHash = new Map()
         const now = Date.now()
         const lines = []
         const next = []
         let updated = 0
         let added = 0
         let kept = 0
+        let reused = 0
         let failed = 0
 
         for (const url of urls) {
@@ -275,11 +280,30 @@ module.exports = {
             const version = readScriptInfo(script, 'version')
             const local = nameMap.get(name)
 
+            // 本轮内另一地址已导入过完全相同的脚本：直接复用，不再重复导入。
+            //（否则上游 importApi 会因“脚本内容相同”抛错，或凭空多出一个重复源）
+            if (importedByHash.has(hash)) {
+              const apiId = importedByHash.get(hash)
+              const dupIds = []
+              for (const item of (userApi.list() || [])) {
+                if (item && item.id && item.name === name && item.id !== apiId) dupIds.push(item.id)
+              }
+              if (dupIds.length) {
+                try { await userApi.remove(dupIds) } catch (err) { api.logger.warn(`清理同名重复源失败（${name}）：`, err) }
+              }
+              reused++
+              next.push({ url, apiId, name, version, hash, updatedAt: now })
+              nameMap.set(name, { id: apiId, name })
+              lines.push(`内容相同，复用已导入：${name}${version ? ` v${version}` : ''}`)
+              continue
+            }
+
             // 内容与上次一致、且本地同名条目就是上次导入的那个 → 无需重新导入
             //（id 不变，用户的勾选等状态原样保留）；但若本地还有同名的其他条目
             //（如用户手动导入过的重复项），顺手清掉，只保留本插件导入的那一个。
             if (local && prev && prev.apiId === local.id && prev.hash === hash) {
               kept++
+              importedByHash.set(hash, prev.apiId)
               const dupIds = []
               for (const item of (userApi.list() || [])) {
                 if (item && item.id && item.name === name && item.id !== prev.apiId) dupIds.push(item.id)
@@ -324,6 +348,7 @@ module.exports = {
                 }
               }
               updated++
+              importedByHash.set(hash, apiId)
               next.push({ url, apiId, name, version, hash, updatedAt: now })
               nameMap.set(name, { id: apiId, name })
               lines.push(`已更新（覆盖本地同名源）：${name}${version ? ` v${version}` : ''}`)
@@ -333,6 +358,7 @@ module.exports = {
               if (!res.success) throw new Error(res.message || '导入失败')
               const apiId = (res.apiInfo && res.apiInfo.id) || ''
               added++
+              importedByHash.set(hash, apiId)
               next.push({ url, apiId, name, version, hash, updatedAt: now })
               nameMap.set(name, { id: apiId, name })
               lines.push(`新增导入：${name}${version ? ` v${version}` : ''}`)
@@ -352,7 +378,7 @@ module.exports = {
         state.sources = next
         state.lastUpdateAt = now
         state.lastResult =
-          `${reason}完成（${formatTime(now)}）：更新 ${updated}、新增 ${added}、未变化 ${kept}、失败 ${failed}\n` +
+          `${reason}完成（${formatTime(now)}）：更新 ${updated}、新增 ${added}、未变化 ${kept}、复用 ${reused}、失败 ${failed}\n` +
           lines.join('\n')
         api.logger.info(`远程自定义源更新完成：更新 ${updated}、新增 ${added}、未变化 ${kept}、失败 ${failed}`)
       } catch (err) {
