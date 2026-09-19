@@ -1,0 +1,622 @@
+name: Build Beta
+
+on:
+  push:
+    branches:
+      - beta
+
+env:
+  IS_CI: 'true'
+
+# 构建各平台安装包与插件，并由 Release 任务自动创建 GitHub Pre-release，
+# 把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
+# 插件按「一个插件一个任务 / 一个 Artifact」的方式构建上传，可单独下载某一个插件。
+#
+# 快速通道：若本次推送只改了插件目录（lx-plugins/**，含插件版本说明等），
+# 则跳过各平台安装包构建，只重新构建插件，并把新的 .lxplugin 覆盖上传到
+# **最新的 pre-release** 附件上（不新建预发布）——插件版本始终与 app 版本一致，
+# 因此附件名不变、直接替换即可。
+# 权限最小化：默认只读，仅 Release 任务提权到 contents: write（创建预发布需要）。
+permissions:
+  contents: read
+
+jobs:
+  # 变更范围检测：决定走「全量构建」还是「仅插件」快速通道。
+  Changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      plugins_only: ${{ steps.detect.outputs.plugins_only }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect plugin-only changes
+        id: detect
+        run: |
+          set -euo pipefail
+          before='${{ github.event.before }}'
+          zero='0000000000000000000000000000000000000000'
+          # 首次推送 / 强制推送 / 非推送事件拿不到可靠的变更范围，按全量构建处理（安全兜底）
+          if [ -z "$before" ] || [ "$before" = "$zero" ] || ! git cat-file -e "$before^{commit}" 2>/dev/null; then
+            echo "plugins_only=false" >> "$GITHUB_OUTPUT"
+            echo "无法确定变更范围（首次推送 / 强推），按全量构建处理"
+            exit 0
+          fi
+          git diff --name-only "$before" "${{ github.sha }}" > changed-files.txt
+          echo "本次变更的文件："
+          cat changed-files.txt
+          # 全部命中插件相关路径（插件目录 / 插件构建工作流）才算「仅插件变更」。
+          # 注意 src/plugins/** 是宿主代码、package.json 关系到安装包版本，都不算插件变更。
+          if [ -s changed-files.txt ] && ! grep -qvE '^(lx-plugins/|\.github/workflows/plugin-build\.yml$)' changed-files.txt; then
+            echo "plugins_only=true" >> "$GITHUB_OUTPUT"
+            echo "判定：仅插件目录变更 → 跳过安装包构建，只构建插件并更新最新 pre-release 的附件"
+          else
+            echo "plugins_only=false" >> "$GITHUB_OUTPUT"
+            echo "判定：存在 app 源码 / 配置变更 → 全量构建"
+          fi
+
+  Windows:
+    name: Windows
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
+    runs-on: windows-latest
+    # needs: CheckCode
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Get npm cache directory
+        shell: pwsh
+        run: echo "NPM_CACHE=$(npm config get cache)" >> $env:GITHUB_ENV
+
+      - name: Setup Node Env
+        env:
+          NPM_CACHE: ${{ env.NPM_CACHE }}
+        uses: ./.github/actions/setup
+
+      - name: Build src code
+        run: |
+          git status --porcelain
+          npm run build
+
+      - name: Build Package Setup x64
+        run: npm run pack:win:setup:x64
+      - name: Upload Artifact Setup x64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-x64-Setup
+          path: build/*-x64-Setup.exe
+
+      - name: Build Package 7z x64
+        run: npm run pack:win:7z:x64
+      - name: Upload Artifact 7z x64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-win_x64-green
+          path: build/*win_x64-green.7z
+
+      - name: Build Package Setup arm64
+        run: npm run pack:win:setup:arm64
+      - name: Upload Artifact Setup arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-arm64-Setup
+          path: build/*-arm64-Setup.exe
+
+      - name: Build Package 7z arm64
+        run: npm run pack:win:7z:arm64
+      - name: Upload Artifact 7z arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-win_arm64-green
+          path: build/*win_arm64-green.7z
+
+      - name: Generate file MD5
+        run: |
+          cd build
+          Get-FileHash *.exe,*.7z -Algorithm MD5 | Format-List
+
+  Windows_7:
+    name: Windows_7
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
+    runs-on: windows-latest
+    env:
+      BUILD_WIN7: true
+    # needs: CheckCode
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Get npm cache directory
+        shell: pwsh
+        run: echo "NPM_CACHE=$(npm config get cache)" >> $env:GITHUB_ENV
+
+      - name: Setup Node Env
+        env:
+          NPM_CACHE: ${{ env.NPM_CACHE }}
+        uses: ./.github/actions/setup
+
+      - name: Prepare win7 undici env
+        run: |
+          npm install undici@5
+          Set-Content -Path .\src\common\utils\request.ts -Value "export * from './request_node16'"
+
+      - name: Build src code
+        env:
+          BUILD_WIN7: true
+        run: |
+          git status --porcelain
+          npm run build
+
+      - name: Prepare win7 electron env
+        run: |
+          npm install electron@22
+          pip.exe install setuptools
+
+      - name: Build Package win7 Setup x64
+        run: npm run pack:win7:setup:x64
+      - name: Upload Artifact win7 Setup x64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-win7_x64-Setup
+          path: build/*win7_x64-Setup.exe
+
+      - name: Build Package win7 7z x64
+        run: npm run pack:win7:7z:x64
+      - name: Upload Artifact win7 7z x64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-win7_x64-green
+          path: build/*win7_x64-green.7z
+
+      - name: Build Package win7 7z x86
+        run: npm run pack:win7:7z:x86
+      - name: Upload Artifact win7 7z x86
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-win7_x86-green
+          path: build/*win7_x86-green.7z
+
+      - name: Generate file MD5
+        run: |
+          cd build
+          Get-FileHash *.exe,*.7z -Algorithm MD5 | Format-List
+
+  Mac:
+    name: Mac
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
+    runs-on: macos-latest
+    # needs: CheckCode
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Install python setuptools
+        run: brew install python-setuptools
+
+      - name: Get npm cache directory
+        shell: bash
+        run: echo "NPM_CACHE=$(npm config get cache)" >> $GITHUB_ENV
+
+      - name: Setup Node Env
+        env:
+          NPM_CACHE: ${{ env.NPM_CACHE }}
+        uses: ./.github/actions/setup
+
+      - name: Build src code
+        run: |
+          git status --porcelain
+          npm run build
+
+      - name: Build Package dmg
+        run: |
+          npm run pack:mac:dmg
+          npm run pack:mac:dmg:arm64
+
+      - name: Upload Artifact dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-mac-dmg
+          path: |
+            build/*.dmg
+            !build/*-arm64.dmg
+      - name: Upload Artifact dmg
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-mac-dmg-arm64
+          path: build/*-arm64.dmg
+
+      - name: Generate file MD5
+        run: |
+          cd build
+          md5 *.dmg
+
+  Linux:
+    name: Linux
+    needs: Changes
+    if: needs.Changes.outputs.plugins_only != 'true'
+    runs-on: ubuntu-latest
+    # needs: CheckCode
+    steps:
+      - name: Install package
+        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools
+
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Get npm cache directory
+        shell: bash
+        run: echo "NPM_CACHE=$(npm config get cache)" >> $GITHUB_ENV
+
+      - name: Setup Node Env
+        env:
+          NPM_CACHE: ${{ env.NPM_CACHE }}
+        uses: ./.github/actions/setup
+
+      - name: Build src code
+        run: |
+          git status --porcelain
+          npm run build
+
+      - name: Build Package deb amd64
+        run: npm run pack:linux:deb:amd64
+      - name: Upload Artifact deb amd64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-deb-amd64
+          path: build/*_amd64.deb
+
+      - name: Build Package deb arm64
+        run: npm run pack:linux:deb:arm64
+      - name: Upload Artifact deb arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-deb-arm64
+          path: build/*_arm64.deb
+
+      - name: Build Package deb armv7l
+        run: npm run pack:linux:deb:armv7l
+      - name: Upload Artifact deb armv7l
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-deb-armv7l
+          path: build/*_armv7l.deb
+
+      - name: Build Package x64 appImage
+        run: npm run pack:linux:appImage
+      - name: Upload Artifact x64 appImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-x64-appImage
+          path: build/*_x64.AppImage
+
+      - name: Build Package x64 rpm
+        run: npm run pack:linux:rpm
+      - name: Upload Artifact x64 rpm
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-x64-rpm
+          path: build/*.x64.rpm
+
+      - name: Build Package x64 pacman
+        run: npm run pack:linux:pacman
+      - name: Upload Artifact x64 pacman
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-music-desktop-x64-pacman
+          path: build/*_x64.pacman
+
+      - name: Generate file MD5
+        run: |
+          cd build
+          md5sum *.deb *.rpm *.pacman *.AppImage
+
+  # 读取版本号 + 发现 lx-plugins/ 下的插件项目，供下面的矩阵构建与 Release 说明使用。
+  # 构建脚本零依赖（不需要 npm install），因此插件相关任务都很轻量。
+  PluginMeta:
+    name: Plugin Meta
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      plugins: ${{ steps.plugins.outputs.plugins }}
+      plugin_list: ${{ steps.describe.outputs.plugin_list }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "版本号：$VERSION"
+
+      - name: Discover plugin projects
+        id: plugins
+        run: |
+          LIST=$(node -e "
+            const fs = require('fs'), path = require('path');
+            const root = 'lx-plugins';
+            const names = fs.readdirSync(root, { withFileTypes: true })
+              .filter(e => e.isDirectory() && fs.existsSync(path.join(root, e.name, 'plugin.json')))
+              .map(e => e.name)
+              .sort();
+            if (!names.length) { console.error('lx-plugins 下没有发现任何插件项目'); process.exit(1); }
+            process.stdout.write(JSON.stringify(names));
+          ")
+          echo "plugins=$LIST" >> "$GITHUB_OUTPUT"
+          echo "发现插件项目：$LIST"
+
+      # 生成 Release 说明里的插件清单（插件附件名 + 说明），每个插件一行。
+      # 插件版本统一使用 app 版本（构建时由 build.js 自动注入，plugin.json 不再维护 version），
+      # 附件名也因此形如 <插件名>-<版本>.lxplugin；新增插件无需改本文件。
+      - name: Describe plugins
+        id: describe
+        env:
+          PLUGINS: ${{ steps.plugins.outputs.plugins }}
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs'), path = require('path');
+            const names = JSON.parse(process.env.PLUGINS);
+            const lines = names.map(name => {
+              const pj = JSON.parse(fs.readFileSync(path.join('lx-plugins', name, 'plugin.json'), 'utf-8'));
+              return '- **' + name + '-' + process.env.APP_VERSION + '.lxplugin**' + (pj.description ? '：' + pj.description : '');
+            });
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'plugin_list<<EOF\n' + lines.join('\n') + '\nEOF\n');
+          "
+          echo "插件清单："
+          echo "${{ steps.plugins.outputs.plugins }}"
+
+  # 每个插件单独构建、单独上传为一个 Artifact（可只下载某一个插件）。
+  # 插件列表由 PluginMeta 动态发现，新增插件项目无需修改本文件。
+  Plugins:
+    name: Plugins / ${{ matrix.plugin }}
+    needs: PluginMeta
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.PluginMeta.outputs.plugins) }}
+    steps:
+      - name: Check out git repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Build plugin ${{ matrix.plugin }}
+        run: node lx-plugins/repo-source-plugins/build.js ${{ matrix.plugin }}
+
+      - name: Upload Artifact ${{ matrix.plugin }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lx-plugin-${{ matrix.plugin }}
+          # 产物名带版本号（<插件名>-<版本>.lxplugin），故用通配符取；
+          # build.js 构建前会清掉该项目在 dist/ 里的旧产物，这里只会匹配到一个文件。
+          path: lx-plugins/${{ matrix.plugin }}/dist/*.lxplugin
+          if-no-files-found: error
+
+  # 全量构建：等所有平台的安装包与插件都构建完成后，自动创建 GitHub Pre-release，
+  # 并把「各平台安装包 + 插件(.lxplugin)」一并上传为预发布附件。
+  # 每个插件都单独作为一个附件上传（各自一个 Artifact / 一个独立文件名），可单独下载某一个插件。
+  #
+  # 仅插件变更（plugins_only == 'true'）：安装包任务被跳过，这里不新建预发布，
+  # 而是把新构建的 .lxplugin **覆盖上传到最新的 pre-release**（--clobber 替换同名附件）。
+  Release:
+    name: Create Pre-release
+    needs: [Changes, Windows, Windows_7, Mac, Linux, PluginMeta, Plugins]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # 不合并 artifact：每个 Artifact 各自落到 dist/<artifact 名>/ 下，
+      # 这样插件不会被混进安装包的目录里，也便于下面按插件逐个上传。
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: '*'
+          merge-multiple: false
+
+      - name: List release files
+        run: ls -lhR dist
+
+      - name: Create Pre-release
+        if: needs.Changes.outputs.plugins_only != 'true'
+        uses: softprops/action-gh-release@v3
+        with:
+          # 必须显式指定 target_commitish：该参数默认指向「仓库默认分支」，
+          # 而这里构建的是 beta 分支的提交，不指定会导致 tag 指向 master 的 HEAD。
+          tag_name: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+
+            由 `beta` 分支推送自动构建的预发布版本，附件包含各平台安装包与插件（`.lxplugin`，每个插件单独一个附件）。
+
+            - 提交：`${{ github.sha }}`
+            - 工作流运行：#${{ github.run_number }}
+
+            ### 插件（每个插件单独一个附件）
+
+            ${{ needs.PluginMeta.outputs.plugin_list }}
+
+            ### 插件安装
+
+            下载需要的 `.lxplugin` 文件后，在客户端侧边栏「插件管理」中点击「上传安装插件」上传即可安装 / 更新（已装过则在对应插件那行点「上传新版本」）。
+          # 安装包：每个安装包 Artifact 目录下的文件各自作为独立附件；
+          # 插件：每个插件 Artifact 目录下的 .lxplugin 各自作为独立附件。
+          #
+          # ⚠️ 这两条 glob 必须**互不重叠**，不要把 dist/ 下的文件再交给更宽的
+          # 模式（例如再补一条 dist/**）—— action 的 paths() 只是把所有模式的
+          # 匹配结果 concat 起来、**不做去重**，于是每个文件会被排进上传队列两次，
+          # 再由 Promise.all 并发上传同名文件，触发 422 already_exists /
+          # 资产元数据 404 的竞态：轻则附件静默缺失，重则整步失败报
+          # 「Not Found - .../releases/assets#update-a-release-asset」。
+          files: |
+            dist/lx-music-desktop-*/*
+            dist/lx-plugin-*/*.lxplugin
+          # 串行上传（按上面 files 的顺序）。默认是 Promise.all 并发上传，
+          # 附件多时容易撞上 GitHub 一侧「资产元数据延迟可见」的瞬时 404。
+          preserve_order: true
+          generate_release_notes: true
+          draft: false
+          prerelease: true
+
+      # ===== 仅插件变更的快速通道：把新插件覆盖上传到最新的 pre-release =====
+      - name: Find latest pre-release
+        id: latest
+        if: needs.Changes.outputs.plugins_only == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # gh release list 默认按创建时间倒序；取第一个预发布
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 50 \
+            --json tagName,isPrerelease,createdAt \
+            --jq '[.[] | select(.isPrerelease)][0].tagName // empty')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "最新的 pre-release：${tag:-（不存在，将回退为新建）}"
+
+      - name: Upload plugins to latest pre-release
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/lx-plugin-*/*.lxplugin)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::没有找到插件构建产物（dist/lx-plugin-*/*.lxplugin）"
+            exit 1
+          fi
+
+          # 产物名带版本号（<插件名>-<版本>.lxplugin），而 --clobber 只按**同名**替换。
+          # 目标 pre-release 上若残留别的版本 / 旧命名（无版本号）的插件附件，先删掉它们，
+          # 否则附件里会同时挂着新旧两版（用户可能下错），下面的核对步骤也会一直对不上。
+          expected=$(for f in "${files[@]}"; do basename "$f"; done | sort)
+          while IFS= read -r asset; do
+            [ -z "$asset" ] && continue
+            if ! grep -qxF "$asset" <<< "$expected"; then
+              echo "删除过期插件附件：$asset"
+              gh release delete-asset "$TAG" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+            fi
+          done < <(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+                     --jq '.assets[].name' | grep '\.lxplugin$' || true)
+
+          echo "覆盖上传以下插件附件到 pre-release ${TAG}（--clobber 替换同名附件）："
+          ls -lh "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber
+
+      # 仓库还没有任何 pre-release（首次发布就只改了插件）时，退化为新建一个仅含插件的预发布
+      - name: Create Pre-release (plugins only, fallback)
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag == ''
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+          body: |
+            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+
+            本次推送只涉及插件目录变更（无需重打安装包），该预发布仅包含插件附件
+            （`.lxplugin`，每个插件单独一个附件）。
+
+            - 提交：`${{ github.sha }}`
+            - 工作流运行：#${{ github.run_number }}
+
+            ### 插件（每个插件单独一个附件）
+
+            ${{ needs.PluginMeta.outputs.plugin_list }}
+
+            ### 插件安装
+
+            下载需要的 `.lxplugin` 文件后，在客户端侧边栏「插件管理」中点击「上传安装插件」上传即可安装 / 更新（已装过则在对应插件那行点「上传新版本」）。
+          files: |
+            dist/lx-plugin-*/*.lxplugin
+          preserve_order: true
+          generate_release_notes: true
+          draft: false
+          prerelease: true
+
+      # 上传完必须核对一次：插件附件数/文件名要和 dist/ 里准备上传的完全一致。
+      # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
+      - name: Verify plugins on latest pre-release
+        if: needs.Changes.outputs.plugins_only == 'true' && steps.latest.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in dist/lx-plugin-*/*.lxplugin; do basename "$f"; done | sort > expected.txt
+          echo "期望的插件附件（$(wc -l < expected.txt | tr -d ' ') 个）："
+          cat expected.txt
+
+          ok=0
+          for i in $(seq 1 5); do
+            # 只比对 .lxplugin 附件：pre-release 上还有历史安装包，不在本次核对范围
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | grep '\.lxplugin$' | sort > actual.txt
+            if diff -q expected.txt actual.txt > /dev/null; then
+              ok=1
+              break
+            fi
+            echo "第 $i 次核对未通过（release 上 $(wc -l < actual.txt | tr -d ' ') 个插件附件），3 秒后重试…"
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::pre-release $TAG 的插件附件与预期不一致（下面 - 表示缺失、+ 表示多余）："
+            diff -u expected.txt actual.txt || true
+            exit 1
+          fi
+          echo "✅ 已把最新插件附件覆盖到 pre-release ${TAG}（$(wc -l < actual.txt | tr -d ' ') 个插件齐全）"
+
+      # 上传完必须核对一次：附件数/文件名要和 dist/ 里准备上传的文件完全一致。
+      # 之前出现过「步骤成功但 release 上少了 2 个插件」的静默失败，靠这一步兜住。
+      - name: Verify release assets
+        if: needs.Changes.outputs.plugins_only != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.PluginMeta.outputs.version }}-beta.${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          # 用 sed 取 basename：BSD/GNU 通用（find -printf 只有 GNU 有）
+          find dist -type f | sed 's#.*/##' | sort > expected.txt
+          echo "准备上传的附件（$(wc -l < expected.txt | tr -d ' ') 个）："
+          cat expected.txt
+
+          ok=0
+          for i in $(seq 1 5); do
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets \
+              --jq '.assets[].name' | sort > actual.txt
+            if diff -q expected.txt actual.txt > /dev/null; then
+              ok=1
+              break
+            fi
+            echo "第 $i 次核对未通过（release 上 $(wc -l < actual.txt | tr -d ' ') 个附件），3 秒后重试…"
+            sleep 3
+          done
+
+          if [ "$ok" != "1" ]; then
+            echo "::error::发布的附件与预期不一致（下面 - 表示缺失、+ 表示多余）："
+            diff -u expected.txt actual.txt || true
+            exit 1
+          fi
+          echo "✅ 附件核对通过：$(wc -l < actual.txt | tr -d ' ') 个附件齐全，且每个插件各自一个独立附件"
