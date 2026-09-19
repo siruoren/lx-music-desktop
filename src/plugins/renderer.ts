@@ -33,7 +33,7 @@ import { toRaw } from '@common/utils/vueTools'
 import { LIST_IDS } from '@common/constants'
 import { HookBus } from './hookBus'
 import { PatchManager } from './patch'
-import { createPluginApi, getPatchRecords, disposeApi } from './host'
+import { createPluginApi, getPatchRecords, disposeApi, runShutdown } from './host'
 import type { HostContext } from './host'
 import { evaluatePluginModule } from './loader'
 import type { ModuleRequire } from './loader'
@@ -384,10 +384,47 @@ export function isRendererPluginLoaded(id: string): boolean {
 }
 
 /**
+ * 应用退出（关闭窗口 / 重载页面）时**同步终止**所有 renderer 插件的后台工作。
+ * 注意：这不是卸载——不调用 uninstall、不回退 patch / hooks、不清插件登记状态
+ * （进程退出或重载后插件会重新 setup 并重新读取配置）；只广播 `app:quit` 并回收
+ * 宿主代管的资源（定时器、api.onQuit/track 登记的清理回调、module.onQuit），
+ * 保证插件派生的下载 / 子进程不会残留到退出之后。
+ */
+function shutdownAllPlugins(reason: string): void {
+  try { rendererHooks.emit('app:quit', { reason }) } catch (err) { console.error('[plugin] 广播 app:quit 失败：', err) }
+  for (const [id, rec] of loadedRenderers) {
+    try {
+      runShutdown(rec.api)
+      rec.module.onQuit?.()
+    } catch (err) {
+      console.error(`[plugin] 退出时终止插件后台任务失败 ${id}:`, err)
+    }
+  }
+}
+
+/**
+ * 启动 / 重载：把上一轮插件留下的全部运行期登记清空（执行状态重载）。
+ * 之后每个插件重新 setup，并从插件目录 config.json **重新读取自己的配置** ——
+ * 所以任何插件内只存内存的「进行中 / 处理中」状态都不会跨启动残留。
+ */
+function resetPluginRuntimeState(): void {
+  for (const id of musicSources.keys()) Reflect.deleteProperty(musicSdk, id)
+  musicSources.clear()
+  loadedRenderers.clear()
+  pluginSettings.clear()
+  pluginConfig.clear()
+}
+
+/**
  * 初始化 renderer 插件系统。
  * @param app Vue 应用实例（预留：插件可通过 api.app 拿到，或后续注册 UI 组件）
  */
 export async function initUserPlugins(_app?: any): Promise<void> {
+  // 启动 / 重载：先把上一轮插件留下的运行期登记全部清空（执行状态重载），
+  // 随后每个插件重新 setup 并重新读取自己的配置 —— 保证启动后的执行状态是全新的。
+  if (rendererHooks && loadedRenderers.size) shutdownAllPlugins('reload')
+  resetPluginRuntimeState()
+
   rendererHooks = new HookBus()
   rendererPatch = new PatchManager()
   rendererHostCtx = {
@@ -495,4 +532,18 @@ export async function initUserPlugins(_app?: any): Promise<void> {
     await loadRendererPlugin(p.id)
   }
   rendererHooks.emit('app:ready')
+
+  // 应用退出（关闭窗口 / 重新加载）时**同步终止**所有插件的后台进程（不是卸载）：
+  // 插件可在 module.onQuit / api.onQuit 里中断下载、kill 子进程；宿主同时强制回收
+  // api.setTimeout/setInterval 定时器与 api.track 登记的资源。
+  // beforeunload / unload / pagehide 都监听，但只执行一次（shutdownAllPlugins 幂等靠此保证）。
+  let quitHandled = false
+  const handleQuit = (reason: string) => {
+    if (quitHandled) return
+    quitHandled = true
+    shutdownAllPlugins(reason)
+  }
+  window.addEventListener('beforeunload', () => handleQuit('beforeunload'))
+  window.addEventListener('unload', () => handleQuit('unload'))
+  window.addEventListener('pagehide', () => handleQuit('pagehide'))
 }

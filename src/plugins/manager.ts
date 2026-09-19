@@ -15,7 +15,7 @@ import { basename, join, resolve } from 'path'
 import { EnabledState, PluginConfigStore, atomicWrite } from './storage'
 import { readManifest, checkCompatibility } from './manifest'
 import { compareVersion } from './semver'
-import { createPluginApi, getPatchRecords, disposeApi } from './host'
+import { createPluginApi, getPatchRecords, disposeApi, runShutdown } from './host'
 import { evaluatePluginModule } from './loader'
 import { parsePluginFile, isPluginFileName, DEFAULT_ENTRY, PLUGIN_FILE_EXT, MAX_PLUGIN_FILE_SIZE } from './format'
 import type { HostContext } from './host'
@@ -66,6 +66,8 @@ export class PluginManager {
    * 主进程的 loaded 只包含 main 端插件，因此不能用它判断 renderer 端插件是否已启用。
    */
   private readonly runtimeState = new Map<string, { loaded: boolean, error?: string }>()
+  /** shutdownAll 是否已执行过（before-quit 与 will-quit 都会触发，需幂等）；新插件加载后重置 */
+  private quitHandled = false
 
   constructor(pluginsDir: string, host: HostContext) {
     this.pluginsDir = pluginsDir
@@ -200,6 +202,25 @@ export class PluginManager {
       }
     }
     this.host.hooks.emit('app:ready')
+  }
+
+  /**
+   * 应用退出时**同步终止**所有已加载主进程插件的后台工作（定时器、子进程、下载等）。
+   * 注意：这不是卸载——不调用 uninstall、不回退 patch / hooks（进程即将退出，无需恢复现场）；
+   * 只广播 `app:quit` 并回收宿主代管的资源，保证插件派生的后台进程/任务不会残留到退出之后。
+   */
+  shutdownAll(): void {
+    if (this.quitHandled) return
+    this.quitHandled = true
+    try { this.host.hooks.emit('app:quit', { reason: 'app-quit' }) } catch (err) { console.error('[plugin] 广播 app:quit 失败：', err) }
+    for (const [id, loaded] of this.loaded) {
+      try {
+        runShutdown(loaded.api)
+        loaded.module.onQuit?.()
+      } catch (err) {
+        console.error(`[plugin] 退出时终止插件后台任务失败 ${id}:`, err)
+      }
+    }
   }
 
   /**
@@ -494,6 +515,8 @@ export class PluginManager {
     if (module.setup) await module.setup(api)
     const loaded: LoadedPlugin = { id, manifest, module, api, dir }
     this.loaded.set(id, loaded)
+    // 新插件加载后需要为它保留一次「退出终止」的机会
+    this.quitHandled = false
     // 通知生命周期
     this.host.hooks.emit('plugin:loaded', { id, manifest })
     return loaded

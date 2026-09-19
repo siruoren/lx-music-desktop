@@ -22,7 +22,7 @@
  * 必须走 store action，无法直接读文件。
  *
  * 入口以 CommonJS 导出：
- *   module.exports = { setup, uninstall, onConfigChange, onSettingsAction }
+ *   module.exports = { setup, uninstall, onConfigChange, onSettingsAction, onQuit }
  */
 'use strict'
 
@@ -261,14 +261,27 @@ function parseSmbList(text) {
   return out
 }
 
+/** 正在运行的子进程（应用退出 / 插件卸载时同步 kill，避免孤儿进程或挂载点残留） */
+const activeChildren = new Set()
+
 /** 跑一个子进程命令（无 shell，参数数组化，避免密码注入） */
 function run(cmd, args, opts) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, Object.assign({ timeout: 30000, windowsHide: true }, opts), (err, stdout, stderr) => {
+    const child = execFile(cmd, args, Object.assign({ timeout: 30000, windowsHide: true }, opts), (err, stdout, stderr) => {
+      activeChildren.delete(child)
       if (err) { err.stdout = stdout || ''; err.stderr = stderr || ''; return reject(err) }
       resolve({ stdout: stdout || '', stderr: stderr || '' })
     })
+    activeChildren.add(child)
   })
+}
+
+/** 同步强制终止全部还在运行的子进程（SIGKILL；Windows 上 Node 会直接 TerminateProcess） */
+function killAllChildren() {
+  for (const child of [...activeChildren]) {
+    try { child.kill('SIGKILL') } catch (_) { try { child.kill() } catch (_) { /* noop */ } }
+  }
+  activeChildren.clear()
 }
 
 /** ============================ WebDAV 客户端 ============================ */
@@ -1410,17 +1423,21 @@ module.exports = {
     const state = Object.assign({}, DEFAULT_CONFIG, api.getConfig())
     let timer = null
 
+    // 应用退出 / 插件卸载时由宿主同步调用：kill 掉还在跑的子进程（smbclient / mount_smbfs / net use 等）
+    api.track(killAllChildren)
+
     const persist = (patch) => { api.setConfig(patch) }
 
     const startTimer = () => {
       stopTimer()
       const minutes = Math.max(1, parseInt(state.interval, 10) || 1)
-      timer = setInterval(() => {
+      // 用宿主代管的 setInterval：应用退出 / 插件卸载时由宿主自动清除
+      timer = api.setInterval(() => {
         void execute('timer').catch(e => api.logger.error('sync-favorites 定时同步异常：', e))
       }, minutes * 60000)
     }
     const stopTimer = () => {
-      if (timer) { clearInterval(timer); timer = null }
+      if (timer) { api.clearInterval(timer); timer = null }
     }
 
     /** 统一执行入口：direction = upload/download/test/timer(用 state.mode) */
@@ -1600,9 +1617,9 @@ module.exports = {
     const connSig = [ctx.state.type, ctx.state.host, ctx.state.port, ctx.state.domain, ctx.state.username, ctx.state.password].join('|')
     if (connSig !== ctx._connSig) {
       ctx._connSig = connSig
-      if (ctx._browseTimer) clearTimeout(ctx._browseTimer)
+      if (ctx._browseTimer) api.clearTimeout(ctx._browseTimer)
       if (ctx.state.host) {
-        ctx._browseTimer = setTimeout(() => { void ctx.doBrowse().catch(e => api.logger.error('sync-favorites 自动浏览失败：', e)) }, 900)
+        ctx._browseTimer = api.setTimeout(() => { void ctx.doBrowse().catch(e => api.logger.error('sync-favorites 自动浏览失败：', e)) }, 900)
       }
     }
     return undefined
@@ -1630,10 +1647,20 @@ module.exports = {
     return undefined
   },
 
-  /** 卸载/禁用：清理定时器 */
+  /**
+   * 应用退出（关闭/重载窗口）时由宿主同步调用：终止后台工作（定时器、子进程）。
+   * 这不是卸载——不还原任何状态，只保证没有后台任务残留到退出之后。
+   */
+  onQuit() {
+    if (ctx) { ctx.stopTimer(); if (ctx._browseTimer) ctx.api.clearTimeout(ctx._browseTimer) }
+    killAllChildren()
+  },
+
+  /** 卸载/禁用：清理定时器与子进程 */
   uninstall() {
-    if (ctx) { ctx.stopTimer(); if (ctx._browseTimer) clearTimeout(ctx._browseTimer) }
+    if (ctx) { ctx.stopTimer(); if (ctx._browseTimer) ctx.api.clearTimeout(ctx._browseTimer) }
+    killAllChildren()
     ctx = null
-    console.log('[plugin:sync-favorites] 已卸载，定时器已清理')
+    console.log('[plugin:sync-favorites] 已卸载，定时器与子进程已清理')
   },
 }
