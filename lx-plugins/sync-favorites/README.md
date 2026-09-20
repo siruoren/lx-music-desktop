@@ -64,7 +64,8 @@ node lx-plugins/repo-source-plugins/build.js sync-favorites
   因此还原/双向同步**不会误清空**未勾选的列表（如只同步歌单时，本地的收藏与试听列表保持原样）。
 - **备份格式**：一个 JSON 信封（`_type: favorites`，含 `_createdAt`；开启加密时 `lists` 改为 AES 密文），
   与「设置 → 备份」导出的结构无关，是插件自有的、可跨设备还原的纯文本（或密文）文件。
-- **定时**：`setInterval` 后台执行，卸载 / 关闭定时时清理，避免泄漏。
+- **定时**：用宿主代管的 `api.setInterval` 执行，卸载 / 关闭定时时清理；应用退出 / 卸载时宿主还会
+  同步 kill 全部还在运行的子进程（`smbclient` / `mount_smbfs` / `net use` 等，经 `api.track` 登记），避免孤儿进程或挂载点残留。
 - **增量同步 + 冲突合并**：每次同步都以「上次同步基线」（`api.setData('syncBase')` 持久化的、各列表的歌曲 id 集合，即三路合并的共同祖先）做比对：
   - 仅一侧有改动 → 自动取那一側，**不冲突**；
   - 两侧都改了同一列表 → **冲突**，按 `conflictStrategy` 处理：`merge` 取并集（不丢歌）、`local`/`remote` 以某侧覆盖；
