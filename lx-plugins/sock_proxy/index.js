@@ -490,6 +490,8 @@ const DEFAULT_CONFIG = {
   password: '',
   /** true：把域名交给代理解析（远程 DNS，推荐，避免本地 DNS 泄漏）；false：本地解析后再连接 */
   remoteDns: true,
+  /** 感知探活：开启后每 10 分钟自动探测代理是否可达，不可达则自动停用并切回本地网络 */
+  healthCheck: false,
   /** 握手超时（毫秒） */
   timeout: DEFAULT_TIMEOUT,
   /** 代理端口留空时的默认端口 */
@@ -501,6 +503,8 @@ let applyExternalConfig = null
 let runConnectionTest = null
 /** 卸载时撤销「会话代理」接管（关掉本地桥 + 通知宿主恢复原代理） */
 let teardownSessionProxy = null
+/** 卸载时停止探活定时器（renderer 端专属，main 端不会启动定时器） */
+let stopHealthCheckRef = null
 
 module.exports = {
   setup(api) {
@@ -652,6 +656,106 @@ module.exports = {
       loggedOnce = false
     }
 
+    /** ============================ 感知探活 ============================ */
+    /**
+     * 感知探活：开启后每 10 分钟自动探测 SOCKS5 代理是否可达；
+     * 探测失败则自动停用代理（节点请求与播放都切回本地网络 / 直连）。
+     */
+    const PROBE_INTERVAL_MS = 10 * 60 * 1000
+    /** 单次探测超时（毫秒）：只测端口 TCP 可达性，故用短超时避免挂起 */
+    const PROBE_TIMEOUT_MS = 5000
+    /** 首次探测失败后，间隔多久复测一次以确认（避免瞬时抖动误停，毫秒） */
+    const PROBE_RETRY_MS = 20000
+    /** 最近一次探活结果 { ok, at }；null 表示尚未探测 */
+    let lastProbe = null
+    /** 是否因探活失败而自动停用（用于重置判断与状态展示） */
+    let autoDisabled = false
+    /** 探活定时器句柄；null 表示未运行（main 端始终为 null，定时器只在 renderer 端跑） */
+    let healthTimer = null
+    /** 复测定时器句柄（首次失败后短延时复测，避免瞬时抖动误停） */
+    let confirmTimer = null
+    /** 是否处于“首次失败待复测”状态 */
+    let pendingFail = false
+
+    /**
+     * 单次探测：直接 TCP 连接代理的 host:port，验证「代理服务在监听、地址可用」。
+     * 只测端口可达性，不依赖本地 DNS 解析、也不依赖代理能否出网，从而避免把
+     * “外网目标不可达 / 本地 DNS 异常”误判为“代理不可用”。带短超时，避免挂起。
+     */
+    const probeProxy = () => new Promise((resolve) => {
+      // 防御：未启用 / 未填地址 / 未开探活 → 视为「无需探活」，不触发停用
+      if (!config.enable || !config.host || !config.healthCheck) return resolve({ ok: true, skipped: true })
+      const port = Number(proxyPortOf())
+      if (!port) return resolve({ ok: true, skipped: true })
+      let settled = false
+      const socket = net.connect({ host: config.host, port, timeout: PROBE_TIMEOUT_MS })
+      const done = (ok) => {
+        if (settled) return
+        settled = true
+        socket.removeAllListeners()
+        try { socket.destroy() } catch { /* noop */ }
+        resolve({ ok })
+      }
+      socket.once('connect', () => done(true))
+      socket.once('error', () => done(false))
+      socket.once('timeout', () => done(false))
+    })
+
+    /** 停止探活定时器（不重置状态标记，但会清掉待复测定时器与待复测状态） */
+    const stopHealthCheck = () => {
+      if (healthTimer) { clearInterval(healthTimer); healthTimer = null }
+      if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null }
+      pendingFail = false
+    }
+
+    /** 清除探活状态标记（自动停用标记、上次探测记录、待复测状态），供「重新勾选」时重置 */
+    const resetProbeState = () => {
+      autoDisabled = false
+      lastProbe = null
+      pendingFail = false
+    }
+
+    /** 单次探测结果处理：失败先短延时复测，连续两次失败才认定不可用并停用 */
+    const onProbeResult = ({ ok, skipped }) => {
+      if (skipped) return
+      lastProbe = { ok, at: Date.now() }
+      if (ok) { pendingFail = false; status = describe(); return }
+      if (pendingFail) {
+        // 复测仍失败 → 确认代理不可用，自动停用并切回本地网络
+        pendingFail = false
+        autoDisabled = true
+        stopHealthCheck()
+        api.logger.warn(`感知探活：SOCKS5 代理 ${config.host}:${proxyPortOf()} 连续两次探测不可达，自动停用代理并切回本地网络`)
+        // 设为未启用：provider 不再接管节点请求，applySessionProxy 撤销 Chromium 会话代理（切回本地网络）；
+        // api.setConfig 经 IPC 通知 main 端同步，播放层一并恢复直连。
+        applyConfig({ enable: false }, true)
+        status = `感知探活失败（${new Date().toLocaleString()}）：代理 ${config.host}:${proxyPortOf()} 连续两次不可达，已自动停用并切回本地网络（在「设置」重新勾选「启用 SOCKS5 代理」或「感知探活」可恢复）`
+        return
+      }
+      // 首次失败：进入“待复测”状态，短延时后复测一次确认
+      pendingFail = true
+      status = `感知探活：代理 ${config.host}:${proxyPortOf()} 不可达，将在 ${Math.round(PROBE_RETRY_MS / 1000)}s 后复测确认（避免瞬时抖动误停）`
+      confirmTimer = setTimeout(() => {
+        confirmTimer = null
+        if (!config.healthCheck || !config.enable || !config.host) { pendingFail = false; return }
+        probeProxy().then(onProbeResult).catch(() => { pendingFail = false })
+      }, PROBE_RETRY_MS)
+    }
+
+    /** 依据当前配置启停探活定时器（地址 / 启用 / 探活任一变化都重新评估） */
+    const startHealthCheck = () => {
+      stopHealthCheck()
+      // 定时器只在 renderer 端运行：renderer 的 api.setConfig 会经 IPC 通知 main 端插件
+      // 同步停用会话代理（切回本地网络），因此无需在 main 端再跑一份。
+      if (isRenderer && config.healthCheck && config.enable && config.host) {
+        healthTimer = setInterval(() => {
+          // 期间配置可能变化，重新把关，避免误停用
+          if (!config.healthCheck || !config.enable || !config.host) return
+          probeProxy().then(onProbeResult).catch(() => { /* 探测异常保持静默，等下个周期再试 */ })
+        }, PROBE_INTERVAL_MS)
+      }
+    }
+
     /**
      * 代理 agent 接管函数：由 src/renderer/utils/request.js 的 getRequestAgent 调用。
      * 返回假值表示不接管（未启用 / 未填地址 / 非 http(s) 请求），交还原逻辑。
@@ -681,14 +785,31 @@ module.exports = {
     const applyConfig = (patch, persist) => {
       const keyOf = c => `${c.enable}|${c.host}|${c.port}|${c.username}|${c.password}|${c.remoteDns}`
       const before = keyOf(config)
+      const wasEnabled = config.enable
+      const wasHealth = config.healthCheck
       Object.assign(config, patch || {})
+      const nowEnabled = config.enable
+      const nowHealth = config.healthCheck
+
+      // 重新勾选「启用 SOCKS5 代理」或「感知探活」→ 重置探活状态
+      // （清除自动停用标记、清空上次探测记录，并由下方 startHealthCheck 重开定时器）。
+      if ((!wasEnabled && nowEnabled) || (!wasHealth && nowHealth)) resetProbeState()
+
       if (keyOf(config) !== before) dropAgents()
       if (persist !== false) api.setConfig(readConfig())
-      // 开关打开时确保接管点已挂上；关闭时不摘掉，provider 自己会返回假值。
-      // pluginNetAgent 是 renderer 端的概念（main 端没有 window.lx），故仅在 renderer 设置。
-      if (isRenderer && config.enable && config.host && lx.pluginNetAgent !== provider) lx.pluginNetAgent = provider
+      // 开关打开时挂上接管点；开关关闭（含探活自动停用）时显式摘掉，确保节点请求 100% 回到宿主默认行为，
+      // 不依赖 provider 返回 undefined 的隐式 fallback。pluginNetAgent 仅 renderer 端有。
+      if (isRenderer) {
+        if (config.enable && config.host) {
+          if (lx.pluginNetAgent !== provider) lx.pluginNetAgent = provider
+        } else if (lx.pluginNetAgent === provider) {
+          lx.pluginNetAgent = null
+        }
+      }
       // 会话代理（Chromium 层，播放/封面走的这一层）随配置同步更新；main 端才有该能力
       applySessionProxy()
+      // 探活定时器随配置（启用 / 探活 / 地址）同步启停
+      startHealthCheck()
       status = describe()
       return readConfig()
     }
@@ -721,6 +842,7 @@ module.exports = {
 
     applyExternalConfig = applyConfig
     runConnectionTest = testConnection
+    stopHealthCheckRef = stopHealthCheck
     teardownSessionProxy = () => {
       stopBridge()
       sessionProxyRules = ''
@@ -737,6 +859,9 @@ module.exports = {
       throw err
     }
     bootLog('setup 完成')
+
+    // 启动时若已启用「感知探活」且代理已配置，立即按当前配置启停探活定时器
+    startHealthCheck()
 
     // ---- 声明式设置面板（宿主统一渲染，配置保存到插件目录 config.json）----
     if (api.registerSettings) {
@@ -755,8 +880,27 @@ module.exports = {
             default: true,
             tip: '建议开启：避免本地 DNS 泄漏，也能解析本地被污染或不可达的域名。',
           },
+          {
+            type: 'switch',
+            key: 'healthCheck',
+            label: '感知探活（每 10 分钟）',
+            default: false,
+            tip: '开启后每 10 分钟自动探测 SOCKS5 代理是否可达；探测失败将自动停用代理并切回本地网络（在「设置」重新勾选可恢复）。',
+          },
           { type: 'divider' },
-          { type: 'info', text: () => status },
+          {
+            type: 'info',
+            text: () => {
+              let extra = ''
+              if (config.healthCheck) {
+                if (autoDisabled) extra = '（因连续两次探活失败已自动停用，重新勾选可恢复）'
+                else if (pendingFail) extra = '（首次探活失败，复测中…）'
+                else if (lastProbe) extra = lastProbe.ok ? '（上次探活：可达）' : '（上次探活：不可达）'
+                else extra = '（探活已开启，每 10 分钟检测一次）'
+              }
+              return status + extra
+            },
+          },
           { type: 'button', label: '测试连接', action: 'test' },
         ],
       })
@@ -773,6 +917,10 @@ module.exports = {
       sessionProxyRules: () => sessionProxyRules,
       bridgePort: () => (bridge ? bridge.port : null),
       status: () => status,
+      /** 感知探活状态：是否开启、定时器是否在跑、上次探测结果、是否因探活而自动停用 */
+      health: () => ({ enabled: config.healthCheck, running: !!healthTimer, lastProbe, autoDisabled, pendingFail }),
+      /** 立即手动探活一次（返回 true=可达）；不改动配置，仅更新 lastProbe */
+      forceProbe: () => probeProxy().then(({ ok }) => { lastProbe = { ok, at: Date.now() }; return ok }),
     }
 
     api.hooks.on('app:ready', () => {
@@ -797,6 +945,8 @@ module.exports = {
   uninstall() {
     applyExternalConfig = null
     runConnectionTest = null
+    if (stopHealthCheckRef) stopHealthCheckRef()
+    stopHealthCheckRef = null
     if (teardownSessionProxy) teardownSessionProxy()
     teardownSessionProxy = null
     const wx = (typeof window !== 'undefined' && window.lx) || null
