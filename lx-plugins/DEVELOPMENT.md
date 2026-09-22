@@ -156,6 +156,9 @@ module.exports = {
   /** 禁用/卸载时调用：清理定时器、连接、自己摘掉的监听等 */
   uninstall() {},
 
+  /** 应用退出时调用：终止插件的后台工作（下载/子进程等）。宿主同步调用、不 await，请只做同步清理 */
+  onQuit() {},
+
   /** 更新到新版本后调用（⚠️ 目前只有 main 端插件会收到） */
   onUpdate(oldVersion) {},
 
@@ -180,9 +183,20 @@ module.exports = {
 | --- | --- | --- |
 | `setup(api)` | 插件被加载（启动 / 启用 / 安装后 UI 主动 load） | 可 async，宿主会 await；抛错 → 状态显示「出错」并给出原因 |
 | `uninstall()` | 禁用 / 卸载 / **更新前**（先卸载旧版本） | 在宿主回退 patch **之前**执行 |
+| `onQuit()` | **应用退出**（关闭窗口 / 重载页面，main 端为 `before-quit`） | **退出 ≠ 卸载**：不调 uninstall、不回退 patch，只终止后台工作；宿主**同步**调用且不 await，请只做同步清理（中断下载、kill 子进程、清运行期标记） |
 | `onUpdate(oldVersion)` | 更新完成后 | ⚠️ 只有 `platforms` 含 `main` 且重新加载成功时触发；renderer 端插件拿不到 |
 | `onConfigChange(config)` | `config.json` 被写入之后（面板改配置、插件自己 `setConfig`） | main / renderer 两端都会触发 |
 | `onSettingsAction(action, config)` | 点击设置面板按钮 | 仅渲染端有面板 |
+
+**退出时的强制终止保证**：应用退出时宿主会对每个已加载插件**同步**执行——
+1. 清掉所有通过 `api.setTimeout` / `api.setInterval` 建立的定时器；
+2. 依次执行 `api.onQuit` / `api.track` 登记的清理回调；
+3. 调用 `module.onQuit()`（若有）。
+
+因此**优先用宿主代管的原语**（`api.setTimeout` / `api.setInterval` / `api.track`），即使插件忘了清理，
+后台任务也不会残留到退出之后；完全脱离宿主自建的定时器 / 子进程才需要自己在 `onQuit` 里收尾。
+应用启动后所有插件重新 `setup` 并**重新读取配置**（`config.json`），任何只存内存的「进行中 / 处理中」
+状态都自动归零——需要跨启动保留的结果请写 `api.setConfig`，只属于本次运行的进度请用 `api.setRuntime`。
 
 ### 零残留：卸载时宿主替你回退
 
@@ -207,6 +221,11 @@ module.exports = {
 | `api.dir` | **仅 main 端**为插件目录绝对路径；renderer 端为空字符串 |
 | `api.app` | main 端 = `global.lx`；renderer 端 = `window.lx` |
 | `api.logger.info/warn/error` | 统一带 `[plugin:<id>]` 前缀输出 |
+| `api.onQuit(fn)` | 登记「应用退出时的同步清理回调」（宿主强制调用、幂等），返回撤销函数 |
+| `api.track(fn)` | 登记一个同步资源回收函数（子进程 kill / socket destroy 等），退出与卸载时宿主强制调用 |
+| `api.setTimeout` / `api.clearTimeout` | 宿主代管的定时器：退出 / 卸载时自动清除 |
+| `api.setInterval` / `api.clearInterval` | 同上（周期定时器） |
+| `api.getRuntime()` / `api.setRuntime(patch)` | 临时执行状态（进行中标记、进度等）：只存内存，**每次启动 / 重载自动清空**，绝不落盘 |
 
 ### 5.2 能力矩阵（哪些能力在哪端可用）
 
@@ -216,6 +235,8 @@ module.exports = {
 | `api.hooks`（事件 / 拦截） | ✅ | ✅（**独立总线，不跨进程**） |
 | `api.getData` / `api.setData` | ✅ `data.json` | ✅ `localStorage` |
 | `api.getConfig` / `api.setConfig` | ✅ | ✅（同一份 `config.json`） |
+| `api.onQuit` / `api.track` / `api.setTimeout` / `api.setInterval` / `api.clear*` | ✅ | ✅ |
+| `api.getRuntime` / `api.setRuntime` | ✅（进程内存态，重启即清） | ✅（同左） |
 | `api.registerSettings` | ❌ | ✅ |
 | `api.registerMusicSource` / `unregisterMusicSource` | ❌ | ✅ |
 | `api.setSessionProxy` | ✅ | ❌ |
@@ -243,6 +264,7 @@ api.hooks.run('search:before', ctx, c => doOriginal(c))  // 发射方用法
 | 事件 | 何时发 | 载荷 |
 | --- | --- | --- |
 | `app:ready` | main：所有已启用的 main 端插件加载完之后；renderer：所有 renderer 端插件加载完之后 | 无 |
+| `app:quit` | 应用退出时（main：`before-quit`；renderer：`beforeunload`），先于强制资源回收发出 | `{ reason }` |
 | `plugin:loaded` | 每个插件加载成功 | main: `{ id, manifest }`；renderer: `{ id }` |
 | `plugin:unloaded` | 插件被卸载/禁用后 | `{ id }` |
 
@@ -460,17 +482,18 @@ api.hooks.on('app:ready', () => { void sync() })
 
 `app:ready` 在所有插件（含自己）都 setup 完之后才发，适合做「读配置 → 联网 → 写回状态」这类工作。
 
-### 7.3 定时任务（务必在卸载时清理）
+### 7.3 定时任务（推荐用宿主代管定时器）
 
 ```js
-let timer = null
 module.exports = {
   setup(api) {
-    timer = setInterval(() => { void sync(api) }, 30 * 60 * 1000)
+    // api.setInterval 由宿主代管：应用退出 / 插件卸载时自动清除，忘清理也不泄漏
+    api.setInterval(() => { void sync(api) }, 30 * 60 * 1000)
   },
-  uninstall() { if (timer) { clearInterval(timer); timer = null } },
 }
 ```
+
+仍用全局 `setInterval` 也可以，但**务必**在 `uninstall()`（以及需要时 `onQuit()`）里自己清理。
 
 ### 7.4 读写「我的列表」（收藏）
 
@@ -610,6 +633,7 @@ grep -rnF '=== Plugin Manager ===' src
 
 | 时间 | 变化 | 关联提交 |
 | --- | --- | --- |
+| 2026-09-19 | 退出终止与启动重载：新增 `module.onQuit`、`app:quit` 宿主事件，`api.onQuit` / `api.track` / `api.setTimeout` / `api.setInterval`（退出与卸载时宿主同步强制回收），`api.getRuntime` / `api.setRuntime`（临时执行状态，启动自动清空）；main 端挂 `before-quit`/`will-quit`，renderer 端挂 `beforeunload`/`unload`/`pagehide` | 本次改动 |
 | 2026-09-18 | 新增主进程插件能力 `api.electron` / `api.setTouchBar` / `api.controlPlayer`（Touch Bar 与播放控制），配套 `src/plugins/winBridge.ts` 注册式桥；新增 `lx-plugins/touch_bar` 插件 | 本次改动 |
 | 2026-09-15 | 构建产物名改为带版本号（`<插件名>-<版本>.lxplugin`）；构建前自动清理该项目在输出目录里的旧产物；CI 改用 `dist/*.lxplugin` 通配收集，快速通道先把非本版本的插件附件删掉 | 本次改动 |
 | 2026-09-15 | 插件管理入口从「设置 → 插件管理」标签页迁到**侧边栏独立页** `/plugins`（`ui/Plugins.vue` + `#icon-plugin`）；设置里不再有该标签页 | `cdb2f13d` |
