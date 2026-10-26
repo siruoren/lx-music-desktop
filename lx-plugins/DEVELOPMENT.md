@@ -1,6 +1,6 @@
 # 插件开发指南
 
-lx-music-desktop（本 fork）插件系统的**开发参考手册**。想写一个插件、或想搞清楚插件系统到底能干什么，看这一篇就够了。
+lxl-music-desktop（本 fork）插件系统的**开发参考手册**。想写一个插件、或想搞清楚插件系统到底能干什么，看这一篇就够了。
 
 > **文档分工**（避免同一件事写两遍）
 >
@@ -413,7 +413,7 @@ api.app.event_app.on('player_status', ({ status, name, singer, collect, lyricLin
 ```
 
 > **Touch Bar 的「后台常驻」限制（重要）**：macOS 的 Touch Bar 永远显示**当前最前台 App** 的内容。
-> `api.setTouchBar` 把自定义 Touch Bar 挂在主窗口上，只要 lx-music 是前台 App（即便窗口最小化）就会显示；
+> `api.setTouchBar` 把自定义 Touch Bar 挂在主窗口上，只要 lxl music 是前台 App（即便窗口最小化）就会显示；
 > 一旦切到其它 App，显示的是那个 App 的 Touch Bar——这是系统行为，单靠 `setTouchBar` 无法突破。
 > 若要做到「像官方 Music app 那样切到别的 App 也常驻媒体控件」，需接入**系统级 Now Playing**
 > （macOS 的 `MPNowPlayingInfoCenter` / Chromium 的 `navigator.mediaSession`），属 App 层能力，需另立项，

@@ -1,4 +1,4 @@
-# lx-music-desktop 常见问题
+# lxl music 常见问题
 
 本文档已迁移至：<https://lyswhut.github.io/lx-music-doc/desktop/faq>
 
@@ -7,7 +7,7 @@
 
 ## ~~软件为什么没有桌面歌词与自定义列表功能~~
 
-洛雪音乐的最初定位不是作为播放器开发的，它主要用于**查找歌曲**，软件的播放功能仅用于试听，不建议用作为常用播放器使用。
+lxl music 的最初定位不是作为播放器开发的，它主要用于**查找歌曲**，软件的播放功能仅用于试听，不建议用作为常用播放器使用。
 
 ## 音乐播放列表机制
 
@@ -175,13 +175,13 @@
 
 1. 确保PC端的同步服务已启用成功（若连接码、同步服务地址没有内容，则证明服务启动失败，此时看启用同步功能复选框后面的错误信息自行解决，另外若你不知道端口号是什么意思就不要乱改，或不要改得太大与太小）
 2. 在手机浏览器地址栏输入`http://x.x.x.x:23332/hello` **（注：将`x.x.x.x`换成PC端显示的同步服务地址，`23332`为PC端的端口号）** 后回车，若此地址可以打开并显示 `Hello~::^-^::`则证明移动端与PC端网络已互通，
-3. 若移动端无法打开第2步的地址，则在PC端的浏览器地址栏输入并打开该地址，若可以打开，则要么是被LX Music PC端被电脑防火墙拦截，要么PC端与移动端不在同一个网络下，或者路由器开启了AP隔离（一般在公共网络下会出现这种情况）
+3. 若移动端无法打开第2步的地址，则在PC端的浏览器地址栏输入并打开该地址，若可以打开，则要么是被lxl music PC端被电脑防火墙拦截，要么PC端与移动端不在同一个网络下，或者路由器开启了AP隔离（一般在公共网络下会出现这种情况）
 
 ## 界面异常（界面显示不完整）
 
 ### Windows 10、11界面异常、界面无法显示
 
-尝试添加运行参数 `--disable-gpu-sandbox` 启动，例如：`.\lx-music-desktop.exe --disable-gpu-sandbox`，添加方法可自行百度“给快捷方式加参数”。
+尝试添加运行参数 `--disable-gpu-sandbox` 启动，例如：`.\lxl-music-desktop.exe --disable-gpu-sandbox`，添加方法可自行百度“给快捷方式加参数”。
 
 若以上方法无效，则尝试将 `--disable-gpu-sandbox` 逐个换成以下参数启动，直到恢复正常为止：
 
@@ -202,7 +202,7 @@
 > 在 windows 操作系统上, 当 DWM 被禁用时, 透明窗口将无法工作。
 
 因此，当 win7 没有使用**Aero**主题时界面将会显示异常，开启AERO的方法请自行百度：`win7开启Aero效果`（开启后可看到任务栏变透明）。<br>
-从`0.14.0`版本起不再强制要求开启透明效果，若你实在不想开启（若非电脑配置太低，墙裂建议开启！），可通过添加运行参数`-dt`来运行程序即可，例如：`.\lx-music-desktop.exe -dt`，添加方法可自行百度“给快捷方式加参数”，该参数的作用是用来控制程序是否使用非透明窗口运行。
+从`0.14.0`版本起不再强制要求开启透明效果，若你实在不想开启（若非电脑配置太低，墙裂建议开启！），可通过添加运行参数`-dt`来运行程序即可，例如：`.\lxl-music-desktop.exe -dt`，添加方法可自行百度“给快捷方式加参数”，该参数的作用是用来控制程序是否使用非透明窗口运行。
 
 注：启用**Aero**主题后，若软件出现黑边框，则重启软件即可恢复正常。
 
@@ -211,7 +211,7 @@
 ### Linux 下界面异常
 
 根据Electron里issue的[解决方案](https://github.com/electron/electron/issues/2170#issuecomment-736223269)，<br>
-若你遇到透明问题可尝试添加启动参数 `-dha` 来禁用硬件加速，例如：`.\lx-music-desktop.exe -dha`。
+若你遇到透明问题可尝试添加启动参数 `-dha` 来禁用硬件加速，例如：`.\lxl-music-desktop.exe -dha`。
 
 注：v1.6.0及之后的版本才支持`-dha`参数
 
@@ -315,10 +315,10 @@ Windows 7 未开启 Aero 效果时桌面歌词会有问题，详情看上面的 
 - 以管理员权限打开`cmd`，输入`sfc /scannow`回车等待检查完成重启电脑
 - 若上面的方法**修复、重启**电脑后仍然不行，就自行百度弹出的**错误信息**看下别人是怎么解决的
 
-## MAC OS无法启动软件，提示 lx-music-desktop 已损坏
+## MAC OS无法启动软件，提示 lxl-music-desktop 已损坏
 
 这是因为软件没有签名，被系统阻止运行，<br>
-在终端里输入 `sudo xattr -rd com.apple.quarantine /Applications/lx-music-desktop.app`，然后输入你的电脑密码即可
+在终端里输入 `sudo xattr -rd com.apple.quarantine /Applications/lxl-music-desktop.app`，然后输入你的电脑密码即可
 
 还可以参考：
 
@@ -329,9 +329,9 @@ Windows 7 未开启 Aero 效果时桌面歌词会有问题，详情看上面的 
 
 默认情况下，软件的数据存储在：
 
-- Windows：`%APPDATA%/lx-music-desktop`
-- Linux：`$XDG_CONFIG_HOME/lx-music-desktop` 或 `~/.config/lx-music-desktop`
-- macOS：`~/Library/Application/lx-music-desktop`
+- Windows：`%APPDATA%/lxl-music-desktop`
+- Linux：`$XDG_CONFIG_HOME/lxl-music-desktop` 或 `~/.config/lxl-music-desktop`
+- macOS：`~/Library/Application/lxl-music-desktop`
 
 在Windows平台下，若程序目录下存在`portable`目录，则自动使用此目录作为数据存储目录（v1.17.0新增）。
 
@@ -341,7 +341,7 @@ Windows 7 未开启 Aero 效果时桌面歌词会有问题，详情看上面的 
 尽管如此，但这不意味着软件是100%安全的，由于软件使用了第三方依赖，当这些依赖存在恶意行为时（[供应链攻击](https://docs.microsoft.com/zh-cn/windows/security/threat-protection/intelligence/supply-chain-malware)），软件也将会受到牵连，所以我只能尽量选择使用较多人用、信任度较高的依赖。<br>
 当然，以上说明建立的前提是在你所用的安装包是从**本项目主页上写的链接**下载的，或者有相关能力者还可以下载源代码自己构建安装包。
 
-从`v0.17.0`起，由于加入了音频输出设备切换功能，该功能调用了 [MediaDevices.enumerateDevices()](https://developer.mozilla.org/zh-CN/docs/Web/API/MediaDevices/enumerateDevices)，可能导致安全软件提示洛雪要访问摄像头（目前发现卡巴斯基会提示），但实际上没有用到摄像头，并且摄像头的提示灯也不会亮，你可以选择阻止访问。
+从`v0.17.0`起，由于加入了音频输出设备切换功能，该功能调用了 [MediaDevices.enumerateDevices()](https://developer.mozilla.org/zh-CN/docs/Web/API/MediaDevices/enumerateDevices)，可能导致安全软件提示lxl music要访问摄像头（目前发现卡巴斯基会提示），但实际上没有用到摄像头，并且摄像头的提示灯也不会亮，你可以选择阻止访问。
 
 最后，若出现杀毒软件报毒、存在恶意行为，请自行判断选择是否继续使用本软件！
 
@@ -358,13 +358,13 @@ Windows 7 未开启 Aero 效果时桌面歌词会有问题，详情看上面的 
 - `-play` 启动时播放指定列表的音乐，参数说明：
   - `type`：播放类型，目前固定为`songList`
   - `source`：播放源，可用值为`kw/kg/tx/wy/mg/myList`，其中`kw/kg/tx/wy/mg`对应各源的在线列表，`myList`为本地列表
-  - `link`：要播放的在线列表歌单链接、或ID，source为`kw/kg/tx/wy/mg`之一（在线列表）时必传，举例：`./lx-music-desktop -play="type=songList&source=kw&link=歌单URL or ID"`，注意：如果传入URL时必须对URL进行编码后再传入
-  - `name`：要播放的本地列表歌单名字，source为`myList`时必传，举例：`./lx-music-desktop -play="type=songList&source=myList&name=默认列表"`
-  - `index`：从列表的哪个位置开始播放，选传，若不传默认播放第一首歌曲，举例：`./lx-music-desktop -play="type=songList&source=myList&name=默认列表&index=2"`
+  - `link`：要播放的在线列表歌单链接、或ID，source为`kw/kg/tx/wy/mg`之一（在线列表）时必传，举例：`./lxl-music-desktop -play="type=songList&source=kw&link=歌单URL or ID"`，注意：如果传入URL时必须对URL进行编码后再传入
+  - `name`：要播放的本地列表歌单名字，source为`myList`时必传，举例：`./lxl-music-desktop -play="type=songList&source=myList&name=默认列表"`
+  - `index`：从列表的哪个位置开始播放，选传，若不传默认播放第一首歌曲，举例：`./lxl-music-desktop -play="type=songList&source=myList&name=默认列表&index=2"`
 
 ## Scheme URL支持
 
-从v1.17.0起支持 Scheme URL，可以使用此功能从浏览器等场景下调用LX Music，我们开发了一个[油猴脚本](https://github.com/lyswhut/lx-music-script#readme)配套使用<br>
+从v1.17.0起支持 Scheme URL，可以使用此功能从浏览器等场景下调用lxl music，我们开发了一个[油猴脚本](https://github.com/lyswhut/lx-music-script#readme)配套使用<br>
 脚本安装地址：<https://greasyfork.org/zh-CN/scripts/438148><br>
 以下是目前可用的Scheme URL调用方式：
 
