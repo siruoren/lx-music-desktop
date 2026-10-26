@@ -10,13 +10,13 @@ const afterPack = require('./build-after-pack')
 */
 const options = {
   appId: 'cn.toside.music.desktop',
-  productName: 'lx-music-desktop',
+  productName: 'lxl-music-desktop',
   beforePack,
   afterPack,
   protocols: {
-    name: 'lx-music-protocol',
+    name: 'lxl-music-protocol',
     schemes: [
-      'lxmusic',
+      'lxlmusic',
     ],
   },
   directories: {
@@ -47,7 +47,7 @@ const options = {
     {
       provider: 'github',
       owner: 'siruoren',
-      repo: 'lx-music-desktop',
+      repo: 'lxl-music-desktop',
     },
   ],
 }
@@ -67,7 +67,7 @@ const winOptions = {
     allowToChangeInstallationDirectory: true,
     // differentialPackage: true,
     license: './licenses/license.rtf',
-    shortcutName: 'LX Music',
+    shortcutName: 'lxl music',
   },
 }
 /**
@@ -86,11 +86,11 @@ const linuxOptions = {
       // https://specifications.freedesktop.org/desktop-entry-spec/latest/example.html
       // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html#desktop-files
       entry: {
-        Name: 'LX Music',
-        'Name[zh_CN]': 'LX Music',
-        'Name[zh_TW]': 'LX Music',
+        Name: 'lxl music',
+        'Name[zh_CN]': 'lxl music',
+        'Name[zh_TW]': 'lxl music',
         Encoding: 'UTF-8',
-        MimeType: 'x-scheme-handler/lxmusic',
+        MimeType: 'x-scheme-handler/lxlmusic',
         StartupNotify: 'false',
       },
     },
@@ -127,7 +127,7 @@ const macOptions = {
         path: '/Applications',
       },
     ],
-    title: 'LX Music v${version}',
+    title: 'lxl music v${version}',
   },
 }
 

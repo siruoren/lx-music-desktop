@@ -1,7 +1,7 @@
 import { httpGet } from './request'
 
-// 版本更新源：siruoren/lx-music-desktop 仓库的 GitHub Releases 最新版本
-const releasesApiUrl = 'https://api.github.com/repos/siruoren/lx-music-desktop/releases'
+// 版本更新源：siruoren/lxl-music-desktop 仓库的 GitHub Releases 最新版本
+const releasesApiUrl = 'https://api.github.com/repos/siruoren/lxl-music-desktop/releases'
 
 const request = async(url, retryNum = 0) => {
   return new Promise((resolve, reject) => {
