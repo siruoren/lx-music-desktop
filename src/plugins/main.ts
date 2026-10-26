@@ -258,7 +258,7 @@ async function pickPluginFile(): Promise<string | null> {
   const res = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [
-      { name: 'LX Music 插件', extensions: ['lxplugin', 'js', 'cjs'] },
+      { name: 'lxl music 插件', extensions: ['lxplugin', 'js', 'cjs'] },
       { name: '所有文件', extensions: ['*'] },
     ],
   })

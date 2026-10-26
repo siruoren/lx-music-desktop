@@ -87,7 +87,7 @@ jobs:
       - name: Upload Artifact Setup x64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-x64-Setup
+          name: lxl-music-desktop-x64-Setup
           path: build/*-x64-Setup.exe
 
       - name: Build Package 7z x64
@@ -95,7 +95,7 @@ jobs:
       - name: Upload Artifact 7z x64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-win_x64-green
+          name: lxl-music-desktop-win_x64-green
           path: build/*win_x64-green.7z
 
       - name: Build Package Setup arm64
@@ -103,7 +103,7 @@ jobs:
       - name: Upload Artifact Setup arm64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-arm64-Setup
+          name: lxl-music-desktop-arm64-Setup
           path: build/*-arm64-Setup.exe
 
       - name: Build Package 7z arm64
@@ -111,7 +111,7 @@ jobs:
       - name: Upload Artifact 7z arm64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-win_arm64-green
+          name: lxl-music-desktop-win_arm64-green
           path: build/*win_arm64-green.7z
 
       - name: Generate file MD5
@@ -162,7 +162,7 @@ jobs:
       - name: Upload Artifact win7 Setup x64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-win7_x64-Setup
+          name: lxl-music-desktop-win7_x64-Setup
           path: build/*win7_x64-Setup.exe
 
       - name: Build Package win7 7z x64
@@ -170,7 +170,7 @@ jobs:
       - name: Upload Artifact win7 7z x64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-win7_x64-green
+          name: lxl-music-desktop-win7_x64-green
           path: build/*win7_x64-green.7z
 
       - name: Build Package win7 7z x86
@@ -178,7 +178,7 @@ jobs:
       - name: Upload Artifact win7 7z x86
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-win7_x86-green
+          name: lxl-music-desktop-win7_x86-green
           path: build/*win7_x86-green.7z
 
       - name: Generate file MD5
@@ -221,14 +221,14 @@ jobs:
       - name: Upload Artifact dmg
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-mac-dmg
+          name: lxl-music-desktop-mac-dmg
           path: |
             build/*.dmg
             !build/*-arm64.dmg
       - name: Upload Artifact dmg
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-mac-dmg-arm64
+          name: lxl-music-desktop-mac-dmg-arm64
           path: build/*-arm64.dmg
 
       - name: Generate file MD5
@@ -268,7 +268,7 @@ jobs:
       - name: Upload Artifact deb amd64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-deb-amd64
+          name: lxl-music-desktop-deb-amd64
           path: build/*_amd64.deb
 
       - name: Build Package deb arm64
@@ -276,7 +276,7 @@ jobs:
       - name: Upload Artifact deb arm64
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-deb-arm64
+          name: lxl-music-desktop-deb-arm64
           path: build/*_arm64.deb
 
       - name: Build Package deb armv7l
@@ -284,7 +284,7 @@ jobs:
       - name: Upload Artifact deb armv7l
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-deb-armv7l
+          name: lxl-music-desktop-deb-armv7l
           path: build/*_armv7l.deb
 
       - name: Build Package x64 appImage
@@ -292,7 +292,7 @@ jobs:
       - name: Upload Artifact x64 appImage
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-x64-appImage
+          name: lxl-music-desktop-x64-appImage
           path: build/*_x64.AppImage
 
       - name: Build Package x64 rpm
@@ -300,7 +300,7 @@ jobs:
       - name: Upload Artifact x64 rpm
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-x64-rpm
+          name: lxl-music-desktop-x64-rpm
           path: build/*.x64.rpm
 
       - name: Build Package x64 pacman
@@ -308,7 +308,7 @@ jobs:
       - name: Upload Artifact x64 pacman
         uses: actions/upload-artifact@v7
         with:
-          name: lx-music-desktop-x64-pacman
+          name: lxl-music-desktop-x64-pacman
           path: build/*_x64.pacman
 
       - name: Generate file MD5
@@ -444,7 +444,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
           body: |
-            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+            ## lxl music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
 
             由 `beta` 分支推送自动构建的预发布版本，附件包含各平台安装包与插件（`.lxplugin`，每个插件单独一个附件）。
 
@@ -468,7 +468,7 @@ jobs:
           # 资产元数据 404 的竞态：轻则附件静默缺失，重则整步失败报
           # 「Not Found - .../releases/assets#update-a-release-asset」。
           files: |
-            dist/lx-music-desktop-*/*
+            dist/lxl-music-desktop-*/*
             dist/lx-plugin-*/*.lxplugin
           # 串行上传（按上面 files 的顺序）。默认是 Promise.all 并发上传，
           # 附件多时容易撞上 GitHub 一侧「资产元数据延迟可见」的瞬时 404。
@@ -532,7 +532,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
           body: |
-            ## LX Music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
+            ## lxl music Desktop Beta v${{ needs.PluginMeta.outputs.version }} (build ${{ github.run_number }})
 
             本次推送只涉及插件目录变更（无需重打安装包），该预发布仅包含插件附件
             （`.lxplugin`，每个插件单独一个附件）。
