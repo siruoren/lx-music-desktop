@@ -34,7 +34,7 @@ const showWinLegacyMessage = () => {
       buttons: ['跳转新版发布页', '知道了'],
     })
     if (result === 0) {
-      void openUrl('https://github.com/lyswhut/lx-music-desktop/releases')
+      void openUrl('https://github.com/siruoren/lx-music-desktop/releases')
     } else if (result === 1) {
       dataStore.set('winLegacyMessageShown', count + 1)
     }
