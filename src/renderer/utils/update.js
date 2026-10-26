@@ -1,21 +1,7 @@
 import { httpGet } from './request'
-import pkg from '../../../package.json'
 
-// TODO add Notice
-
-const author = pkg.author.name
-const name = pkg.name
-
-const address = [
-  [`https://raw.githubusercontent.com/${author}/${name}/master/publish/version.json`, 'direct'],
-  ['https://registry.npmjs.org/lx-music-desktop-version-info/latest', 'npm'],
-  [`https://cdn.jsdelivr.net/gh/${author}/${name}/publish/version.json`, 'direct'],
-  [`https://fastly.jsdelivr.net/gh/${author}/${name}/publish/version.json`, 'direct'],
-  [`https://gcore.jsdelivr.net/gh/${author}/${name}/publish/version.json`, 'direct'],
-  ['https://registry.npmmirror.com/lx-music-desktop-version-info/latest', 'npm'],
-  ['https://gitee.com/lyswhut/lx-music-desktop-versions/raw/master/version.json', 'direct'],
-  ['http://cdn.stsky.cn/lx-music/desktop/version.json', 'direct'],
-]
+// 版本更新源：siruoren/lx-music-desktop 仓库的 GitHub Releases 最新版本
+const releasesApiUrl = 'https://api.github.com/repos/siruoren/lx-music-desktop/releases'
 
 const request = async(url, retryNum = 0) => {
   return new Promise((resolve, reject) => {
@@ -31,41 +17,25 @@ const request = async(url, retryNum = 0) => {
   })
 }
 
-const getDirectInfo = async(url) => {
-  return request(url).then(info => {
-    if (info.version == null) throw new Error('failed')
-    return info
+const formatVersion = version => version.replace(/^v/i, '')
+
+const getReleaseInfo = async() => {
+  return request(releasesApiUrl).then(list => {
+    if (!Array.isArray(list)) throw new Error('failed')
+    const releases = list.filter(item => !item.draft && !item.prerelease && item.tag_name != null)
+    if (!releases.length) throw new Error('failed')
+    const latest = releases[0]
+    return {
+      version: formatVersion(latest.tag_name),
+      desc: latest.body || '',
+      history: releases.slice(1).map(item => ({
+        version: formatVersion(item.tag_name),
+        desc: item.body || '',
+      })),
+    }
   })
 }
 
-const getNpmPkgInfo = async(url) => {
-  return request(url).then(json => {
-    if (!json.versionInfo) throw new Error('failed')
-    const info = JSON.parse(json.versionInfo)
-    if (info.version == null) throw new Error('failed')
-    return info
-  })
+export const getVersionInfo = async() => {
+  return getReleaseInfo()
 }
-
-export const getVersionInfo = async(index = 0) => {
-  const [url, source] = address[index]
-  let promise
-  switch (source) {
-    case 'direct':
-      promise = getDirectInfo(url)
-      break
-    case 'npm':
-      promise = getNpmPkgInfo(url)
-      break
-  }
-
-  return promise.catch(async(err) => {
-    index++
-    if (index >= address.length) throw err
-    return getVersionInfo(index)
-  })
-}
-
-// getVersionInfo().then(info => {
-//   console.log(info)
-// })
