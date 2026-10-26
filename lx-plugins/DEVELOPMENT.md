@@ -646,7 +646,7 @@ grep -rnF '=== Plugin Manager ===' src
 | — | 新增插件配置管理（`config.json` + `getConfig/setConfig` + `registerSettings`） | `f41f7f07` |
 | — | renderer 端插件加载状态上报（修「renderer 插件恒显示已禁用」） | `54c0d4d4` |
 | — | 单文件 `.lxplugin` 格式、构建脚本与工作流优化 | `0405c6aa` `7add5168` |
-| — | 插件系统初版（宿主 / 管理器 / 加载器 / 热加载），内置 `sock_proxy`、`forbidden_update` | `4d96f603` `b57474f4` |
+| — | 插件系统初版（宿主 / 管理器 / 加载器 / 热加载），内置 `sock_proxy` | `4d96f603` `b57474f4` |
 
 ---
 

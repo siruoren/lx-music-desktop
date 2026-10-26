@@ -102,13 +102,12 @@
 - **注册自定义音乐源**（`api.registerMusicSource`），参与跨源搜索
 - **接管网络请求使用的代理 agent**（如让「设置 → 网络 → 网络代理」支持 SOCKS5）
 
-仓库内置了 3 个实用插件（源码与构建脚本见 [`lx-plugins/`](./lx-plugins)，产物可直接上传安装）：
+仓库内置了 2 个实用插件（源码与构建脚本见 [`lx-plugins/`](./lx-plugins)，产物可直接上传安装）：
 
 | 插件 | 作用 |
 | --- | --- |
 | `repo-source-plugins` | 音乐跨源搜索去重与统计增强，并演示如何注册自定义音乐源 |
 | `sock_proxy` | 让「设置 → 网络 → 网络代理」支持 **SOCKS5** 代理（原实现仅支持 HTTP 代理） |
-| `forbidden_update` | 安装启用后**禁用检查更新**，不再发起更新检查，也不再接收更新事件 |
 
 插件系统对上游源码只有 5 处带 `=== Plugin Manager ===` 标记的极小改动，便于跟随上游更新合并；插件运行时位于 [`src/plugins`](./src/plugins)，随主程序打包。插件开发（目录结构、构建方式、API 一览、状态说明）详见 [`lx-plugins/README.md`](./lx-plugins/README.md)。
 
