@@ -1,6 +1,6 @@
 <p align="center"><a href="https://github.com/lyswhut/lx-music-desktop"><img width="200" src="https://github.com/lyswhut/lx-music-desktop/blob/master/doc/images/icon.png" alt="lx-music logo"></a></p>
 
-<h1 align="center">LX Music 桌面版</h1>
+<h1 align="center">lxl music 桌面版</h1>
 
 <p align="center">
   <a href="https://github.com/lyswhut/lx-music-desktop/releases"><img src="https://img.shields.io/github/release/lyswhut/lx-music-desktop" alt="Release version"></a>
@@ -30,7 +30,7 @@
 [9]: https://img.shields.io/github/license/lyswhut/lx-music-desktop
 [10]: https://github.com/lyswhut/lx-music-desktop/blob/master/LICENSE -->
 
-<p align="center">一个基于 Electron & Vue 开发的音乐软件</p>
+<p align="center">一个基于https://github.com/lyswhut/lx-music-desktop项目开发的音乐软件</p>
 
 ## 说明
 
@@ -48,11 +48,11 @@
 *移动版项目地址：https://github.com/lyswhut/lx-music-mobile*
 
 > [!NOTE]
-> 目前新项目 [Any Listen](https://github.com/any-listen/any-listen) 的桌面版、Web 版已实现 LX Music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
-> 我们以后的开发精力将主要集中在新项目上，之前大家在 LX Music 提的功能我们也会考虑在新项目中添加。
-> 对于日常使用 LX Music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
+> 目前新项目 [Any Listen](https://github.com/any-listen/any-listen) 的桌面版、Web 版已实现 lxl music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
+> 我们以后的开发精力将主要集中在新项目上，之前大家在 lxl music 提的功能我们也会考虑在新项目中添加。
+> 对于日常使用 lxl music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
 >
-> 关于我们开发新项目的原因，可以参考：[LX Music 项目发展调整与新项目计划](https://github.com/lyswhut/lx-music-desktop/issues/1912)。
+> 关于我们开发新项目的原因，可以参考：[lxl music 项目发展调整与新项目计划](https://github.com/lyswhut/lx-music-desktop/issues/1912)。
 
 软件变化请查看[更新日志](https://github.com/lyswhut/lx-music-desktop/blob/master/CHANGELOG.md)。
 
@@ -66,11 +66,11 @@
 
 ### Scheme URL 支持
 
-从 v1.17.0 起支持 Scheme URL，可以使用此功能在浏览器等场景下调用 LX Music，我们开发了一个[油猴脚本](https://github.com/lyswhut/lx-music-script#readme)配套使用。
+从 v1.17.0 起支持 Scheme URL，可以使用此功能在浏览器等场景下调用 lxl music，我们开发了一个[油猴脚本](https://github.com/lyswhut/lx-music-script#readme)配套使用。
 
-脚本安装地址：[LX Music 辅助脚本](https://greasyfork.org/zh-CN/scripts/438148)。
+脚本安装地址：[lxl music 辅助脚本](https://greasyfork.org/zh-CN/scripts/438148)。
 
-若你想自己调用 LX Music，可以参考文档「[Scheme URL 支持](https://lyswhut.github.io/lx-music-doc/desktop/scheme-url)」部分。
+若你想自己调用 lxl music，可以参考文档「[Scheme URL 支持](https://lyswhut.github.io/lx-music-doc/desktop/scheme-url)」部分。
 
 ### 数据同步服务
 
@@ -116,9 +116,9 @@
 
 默认情况下，软件的数据存储在：
 
-- Linux：`$XDG_CONFIG_HOME/lx-music-desktop` 或 `~/.config/lx-music-desktop`
-- macOS：`~/Library/Application Support/lx-music-desktop`
-- Windows：`%APPDATA%/lx-music-desktop`
+- Linux：`$XDG_CONFIG_HOME/lxl-music-desktop` 或 `~/.config/lxl-music-desktop`
+- macOS：`~/Library/Application Support/lxl-music-desktop`
+- Windows：`%APPDATA%/lxl-music-desktop`
 
 在 Windows 平台上，若程序文件夹中存在 `portable` 文件夹，则自动使用此文件夹作为数据存储文件夹（适用于 v1.17.0 及以上版本）。
 
@@ -126,7 +126,7 @@
 
 ## 用户界面
 
-<p><img width="100%" src="./doc/images/app.png" alt="lx-music desktop UI"></p>
+<p><img width="100%" src="./doc/images/app.png" alt="lxl music desktop UI"></p>
 
 ## 贡献代码
 
@@ -152,7 +152,7 @@
 
 ---
 
-*词语约定：本协议中的“本项目”指 LX Music（洛雪音乐助手）桌面版项目；“使用者”指签署本协议的使用者；“官方音乐平台”指对本项目内置的包括酷我、酷狗、咪咕等音乐源的官方平台统称；“版权数据”指包括但不限于图像、音频、名字等在内的他人拥有所属版权的数据。*
+*词语约定：本协议中的“本项目”指 lxl music 桌面版项目；“使用者”指签署本协议的使用者；“官方音乐平台”指对本项目内置的包括酷我、酷狗、咪咕等音乐源的官方平台统称；“版权数据”指包括但不限于图像、音频、名字等在内的他人拥有所属版权的数据。*
 
 ### 一、数据来源
 

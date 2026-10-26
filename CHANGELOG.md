@@ -1,4 +1,4 @@
-# lx-music-desktop change log
+# lxl music change log
 
 All notable changes to this project will be documented in this file.
 
@@ -8,9 +8,9 @@ Change log format is based on [Keep a Changelog](http://keepachangelog.com/).
 
 ## [2.12.6](https://github.com/lyswhut/lx-music-desktop/compare/v2.12.5...v2.12.6) - 2026-09-19
 
-目前新项目 Any Listen 的桌面版、Web 版已实现 LX Music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
-以后的开发精力将主要集中在新项目上，之前大家在 LX Music 提的功能我们也会考虑在新项目中添加。
-对于日常使用 LX Music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
+目前新项目 Any Listen 的桌面版、Web 版已实现 lxl music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
+以后的开发精力将主要集中在新项目上，之前大家在 lxl music 提的功能我们也会考虑在新项目中添加。
+对于日常使用 lxl music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
 Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ### 优化
@@ -26,9 +26,9 @@ Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ## [2.12.5](https://github.com/lyswhut/lx-music-desktop/compare/v2.12.4...v2.12.5) - 2026-09-14
 
-目前新项目 Any Listen 的桌面版、Web 版已实现 LX Music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
-以后的开发精力将主要集中在新项目上，之前大家在 LX Music 提的功能我们也会考虑在新项目中添加。
-对于日常使用 LX Music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
+目前新项目 Any Listen 的桌面版、Web 版已实现 lxl music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
+以后的开发精力将主要集中在新项目上，之前大家在 lxl music 提的功能我们也会考虑在新项目中添加。
+对于日常使用 lxl music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
 Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ### 修复
@@ -38,9 +38,9 @@ Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ## [2.12.4](https://github.com/lyswhut/lx-music-desktop/compare/v2.12.3...v2.12.4) - 2026-09-12
 
-目前新项目 Any Listen 的桌面版、Web 版已实现 LX Music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
-以后的开发精力将主要集中在新项目上，之前大家在 LX Music 提的功能我们也会考虑在新项目中添加。
-对于日常使用 LX Music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
+目前新项目 Any Listen 的桌面版、Web 版已实现 lxl music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
+以后的开发精力将主要集中在新项目上，之前大家在 lxl music 提的功能我们也会考虑在新项目中添加。
+对于日常使用 lxl music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
 Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ### 修复
@@ -49,9 +49,9 @@ Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ## [2.12.3](https://github.com/lyswhut/lx-music-desktop/compare/v2.12.2...v2.12.3) - 2026-09-12
 
-目前新项目 Any Listen 的桌面版、Web 版已实现 LX Music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
-以后的开发精力将主要集中在新项目上，之前大家在 LX Music 提的功能我们也会考虑在新项目中添加。
-对于日常使用 LX Music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
+目前新项目 Any Listen 的桌面版、Web 版已实现 lxl music 的大部分功能，并额外支持 WebDAV 歌曲播放、WebDAV 数据同步、独立播放列表等功能。
+以后的开发精力将主要集中在新项目上，之前大家在 lxl music 提的功能我们也会考虑在新项目中添加。
+对于日常使用 lxl music 的人可以试试迁移到 Any Listen，若遇到任何问题可以发 issue 反馈。
 Any Listen 的项目地址为 https://github.com/any-listen/any-listen
 
 ### 优化
@@ -278,7 +278,7 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 
 ## [2.8.0](https://github.com/lyswhut/lx-music-desktop/compare/v2.7.0...v2.8.0) - 2024-06-01
 
-我们发布了关于 LX Music 项目发展调整与新项目计划的说明，
+我们发布了关于 lxl music 项目发展调整与新项目计划的说明，
 详情看： https://github.com/lyswhut/lx-music-desktop/issues/1912
 
 ### 新增
@@ -327,7 +327,7 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 
 - 主题编辑器添加“深色字体”选项，启用后将减少字体颜色梯度，各类字体（正文、标签字体等）颜色将更接近，这有助于解决创建全透明主题时可能出现的字体配色问题（#1799）
 - 新增在线自定义源导入功能，允许通过http/https链接导入自定义源
-- 新增HTTP开放API服务，默认关闭，该服务可以为第三方软件提供调用LX的能力，可用API看[说明文档](https://lyswhut.github.io/lx-music-doc/desktop/open-api)（#1824）
+- 新增HTTP开放API服务，默认关闭，该服务可以为第三方软件提供调用lxl music的能力，可用API看[说明文档](https://lyswhut.github.io/lx-music-doc/desktop/open-api)（#1824）
 - 托盘菜单新增播放、切歌、收藏控制
 - 添加当前软件版本所对应的代码提交版本、提交时间的显示，可到设置-版本更新查看
 
@@ -693,9 +693,9 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 若你更新v2.0.0后，出现之前收藏的歌曲全部丢失或者歌曲无法添加到列表播放的问题，可以按以下方式解决：
 
 1. 根据你的平台类型，进入软件数据目录
-   - Windows：`%APPDATA%/lx-music-desktop`
-   - Linux：`$XDG_CONFIG_HOME/lx-music-desktop` 或 `~/.config/lx-music-desktop`
-   - macOS：`~/Library/Application Support/lx-music-desktop`
+   - Windows：`%APPDATA%/lxl-music-desktop`
+   - Linux：`$XDG_CONFIG_HOME/lxl-music-desktop` 或 `~/.config/lxl-music-desktop`
+   - macOS：`~/Library/Application Support/lxl-music-desktop`
 
 2. 进入`LxDatas`目录，退出LX，删除`lx.data.db`文件，再启动软件即可
 
@@ -710,9 +710,9 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 若你更新v2.0.0后，出现之前收藏的歌曲全部丢失或者歌曲无法添加到列表播放的问题，可以按以下方式解决：
 
 1. 根据你的平台类型，进入软件数据目录
-   - Windows：`%APPDATA%/lx-music-desktop`
-   - Linux：`$XDG_CONFIG_HOME/lx-music-desktop` 或 `~/.config/lx-music-desktop`
-   - macOS：`~/Library/Application Support/lx-music-desktop`
+   - Windows：`%APPDATA%/lxl-music-desktop`
+   - Linux：`$XDG_CONFIG_HOME/lxl-music-desktop` 或 `~/.config/lxl-music-desktop`
+   - macOS：`~/Library/Application Support/lxl-music-desktop`
 
 2. 进入`LxDatas`目录，退出LX，删除`lx.data.db`文件，再启动软件即可
 
@@ -1015,7 +1015,7 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 ### 新增
 
 - 新增“便携”功能，在Windows平台下，若程序目录下存在 portable 目录，则自动使用此目录作为数据存储目录
-- 新增 Scheme URL 支持，同时发布lx-music-script项目配合使用（一个油猴脚本，可以在浏览器中的官方平台网页直接调用LX Music），Scheme URL的调用说明看Readme.md文档的Scheme URL支持部分
+- 新增 Scheme URL 支持，同时发布lx-music-script项目配合使用（一个油猴脚本，可以在浏览器中的官方平台网页直接调用lxl music），Scheme URL的调用说明看Readme.md文档的Scheme URL支持部分
 - 新增启动参数`-proxy-server`与`-proxy-bypass-list`，详细介绍看Readme.md文档的启动参数部分
 - 新增桌面歌词是否延迟滚动设置，默认开启，若你不想要桌面歌词延迟滚动可以去设置-桌面歌词设置关掉
 
@@ -1046,7 +1046,7 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 
 - 播放详情页新增音量控制条
 - 播放详情页新增桌面歌词切换按钮
-- 新增将我的列表保存为TXT、CSV格式，可以去设置-备份与恢复中使用（注意：此类格式的备份目前不支持恢复到LX Music中）
+- 新增将我的列表保存为TXT、CSV格式，可以去设置-备份与恢复中使用（注意：此类格式的备份目前不支持恢复到lxl music中）
 - 新增根据歌曲名、歌手名等字段对列表自动排序的功能，可以在我的列表右击列表名弹出的菜单中使用
 - 新增将播放与下载的歌词转换为繁体中文选项，默认关闭，可在设置-播放设置中开启
 - 现在已允许进入临时播放列表，即：使用歌单详情页、排行榜名称右键菜单的“播放”按钮播放歌曲时，可右击播放封面进入此临时列表
@@ -1165,7 +1165,7 @@ Linux 系统至少需要 `GLIBC_2.29` 版本才能运行。
 
 ## [1.13.0](https://github.com/lyswhut/lx-music-desktop/compare/v1.12.2...v1.13.0) - 2021-09-05
 
-如果你喜欢并经常使用洛雪音乐，并想要第一时间尝鲜洛雪的新功能，可以加入测试企鹅群768786588，
+如果你喜欢并经常使用lxl music，并想要第一时间尝鲜lxl music的新功能，可以加入测试企鹅群768786588，
 注意：测试版的功可能会不稳定，打算潜水的勿加。
 
 ### 新增
@@ -1697,7 +1697,7 @@ https://github.com/lyswhut/lx-music-mobile#readme
 
 - 新增多语言设置，目前软件内置了简体中文、繁体中文、英语三种语言，欢迎提交PR翻译更多语言！
 - 新增无法打开外部歌单FAQ
-- 新增启动参数`search`，使用例子：`.\lx-music-desktop.exe -search="突然的自我 - 伍佰"`
+- 新增启动参数`search`，使用例子：`.\lxl-music-desktop.exe -search="突然的自我 - 伍佰"`
 - 新增音频输出设置
 - 新增软件内的包括字体在内的界面内容大小调整，现在当窗口大小切换到“较小/大/较大”时，软件内的元素将会适当减小或加大，窗口大小的“小”与“中”内的元素将保持之前的大小暂不做改变
 - 新增音源别名，默认将显示别名，想要显示回原名可到设置切换（免责声明：别名仅是本软件用于描述各音源的标签，其名字归版权方所有）
@@ -1754,7 +1754,7 @@ https://github.com/lyswhut/lx-music-mobile#readme
 
 ## [0.15.0](https://github.com/lyswhut/lx-music-desktop/compare/v0.14.1...v0.15.0) - 2020-01-23
 
-洛雪提前祝大家新年快乐、身体健康、阖家幸福！
+lxl music 提前祝大家新年快乐、身体健康、阖家幸福！
 
 ### 修复
 
@@ -1765,7 +1765,7 @@ https://github.com/lyswhut/lx-music-mobile#readme
 
 ## [0.14.1](https://github.com/lyswhut/lx-music-desktop/compare/v0.14.0...v0.14.1) - 2020-01-22
 
-洛雪提前祝大家新年快乐、身体健康、阖家幸福！
+lxl music 提前祝大家新年快乐、身体健康、阖家幸福！
 
 ### 修复
 
@@ -1773,13 +1773,13 @@ https://github.com/lyswhut/lx-music-mobile#readme
 
 ## [0.14.0](https://github.com/lyswhut/lx-music-desktop/compare/v0.13.1...v0.14.0) - 2020-01-22
 
-洛雪提前祝大家新年快乐、身体健康、阖家幸福！
+lxl music 提前祝大家新年快乐、身体健康、阖家幸福！
 
 ### 新增
 
 - 新增各大平台歌单热门标签显示（显示在歌单界面的第一个下拉标签菜单中）
 - 恢复QQ音乐源128k音质试听
-- 新增不强制win7开启透明效果即可使用，但要配置运行参数`-nt`，例如：`.\lx-music-desktop.exe -nt`，添加方法可自行百度“给快捷方式加参数”
+- 新增不强制win7开启透明效果即可使用，但要配置运行参数`-nt`，例如：`.\lxl-music-desktop.exe -nt`，添加方法可自行百度“给快捷方式加参数”
 - 新增“新年快乐”主题，可自行切换体验
 
 ### 优化
@@ -2116,7 +2116,7 @@ https://github.com/lyswhut/lx-music-mobile#readme
 ### 新增
 
 - 新增**歌单**功能，目前支持酷我、酷狗、百度源歌单
-- 在设置界面-关于洛雪音乐说明部分新增**最新版网盘下载地址**与**打赏地址**
+- 在设置界面-关于lxl music说明部分新增**最新版网盘下载地址**与**打赏地址**
 - 新增酷狗 电音热歌榜、DJ热歌榜
 - 新增版本更新超时功能，对于部分无法访问GitHub的用户做更新超时提醒
 

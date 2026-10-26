@@ -9,7 +9,7 @@ const afterPack = require('./build-after-pack')
 * @see https://www.electron.build/configuration/configuration
 */
 const options = {
-  appId: 'cn.toside.music.desktop',
+  appId: 'cn.lxlmusic.desktop',
   productName: 'lxl-music-desktop',
   beforePack,
   afterPack,
